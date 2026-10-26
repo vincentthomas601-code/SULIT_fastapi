@@ -183,8 +183,9 @@ async def upload_ebill(file: UploadFile = File(...), db: Session = Depends(get_d
 
     except Exception as err:
         raise HTTPException(status_code=500, detail=f"Failed to process PDF: {str(err)}")
-    class InsightRequest(BaseModel):
+class InsightRequest(BaseModel):
     prompt_text: str
+
 
 @app.post("/api/insights")
 def generate_insights(payload: InsightRequest):
