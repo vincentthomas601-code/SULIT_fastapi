@@ -193,4 +193,5 @@ def generate_insights(payload: InsightRequest):
         report = get_energy_insights(payload.prompt_text)
         return {"status": "success", "insights": report}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) 
+    
