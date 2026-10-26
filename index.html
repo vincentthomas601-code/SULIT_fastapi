@@ -120,6 +120,18 @@
       </div>
 
     </div>
+    <!-- AI Energy Insights Card -->
+<div style="margin-top: 24px; background-color: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <h3 style="margin: 0; color: #f8fafc; font-size: 1.1rem;">🤖 Gemini AI Energy Insights</h3>
+        <button id="aiBtn" onclick="fetchAIInsights()" style="background-color: #2563eb; color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600;">
+            Generate AI Report
+        </button>
+    </div>
+    <div id="aiOutput" style="background-color: #0f172a; padding: 16px; border-radius: 8px; font-family: monospace; font-size: 0.9rem; line-height: 1.6; color: #cbd5e1; white-space: pre-wrap; min-height: 100px;">
+        Click "Generate AI Report" to get personalized efficiency advice based on your current 411 kWh usage.
+    </div>
+</div>
   </div>
 
   <script>
@@ -220,7 +232,45 @@
         status.innerText = 'Failed to upload PDF.';
       }
     }
+async function fetchAIInsights() {
+    const outputDiv = document.getElementById('aiOutput');
+    const btn = document.getElementById('aiBtn');
 
+    outputDiv.innerText = "⏳ SULIT AI is analyzing your consumption patterns and tariff rates...";
+    btn.disabled = true;
+
+    const payloadData = {
+        prompt_text: `
+        Analyze this household energy usage:
+        - Consumption: 411 kWh
+        - Current Estimated Bill: ₱ 6,252.87
+        - Active Rate: ₱ 15.2138 / kWh
+        - Distribution Provider: Batangas I Electric Cooperative, Inc. (BATELEC I)
+
+        Provide a concise cost breakdown evaluation, waste detection advice, and 3 specific steps to lower this bill.
+        `
+    };
+
+    try {
+        const response = await fetch('/api/insights', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payloadData)
+        });
+
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            outputDiv.innerText = data.insights;
+        } else {
+            outputDiv.innerText = "Error generating insights: " + (data.detail || "Unknown error");
+        }
+    } catch (err) {
+        outputDiv.innerText = "Failed to connect to AI backend: " + err.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
     fetchProviders().then(() => fetchLiveBilling());
     setInterval(fetchLiveBilling, 3000);
   </script>
