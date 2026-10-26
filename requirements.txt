@@ -5,3 +5,4 @@ sqlalchemy
 pydantic
 google-genai
 python-multipart
+pdfplumber
