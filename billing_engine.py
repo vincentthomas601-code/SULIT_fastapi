@@ -1,3 +1,6 @@
+import os
+from google import genai
+from google.genai import types
 from typing import Dict, Any
 
 def calculate_ph_electricity_bill(
@@ -96,3 +99,21 @@ def calculate_ph_electricity_bill(
         "total_bill_php": round(total_bill_php, 2),
         "effective_rate_per_kwh": round(effective_rate_per_kwh, 4)
     }
+def get_energy_insights(nilm_summary_text: str) -> str:
+    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+
+    system_instruction = (
+        "You are SULIT Energy AI, an expert Non-Intrusive Load Monitoring (NILM) "
+        "and energy efficiency consultant. Analyze appliance-level electricity "
+        "consumption data and utility tariff rates to give clear, actionable energy savings advice."
+    )
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=nilm_summary_text,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            temperature=0.3,
+        ),
+    )
+    return response.text

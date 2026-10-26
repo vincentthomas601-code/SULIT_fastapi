@@ -7,10 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-
 from database import Base, engine, get_db
 from models import ProviderRule, ProviderRate, UserSettings, TelemetryLog
-from billing_engine import calculate_ph_electricity_bill
+from billing_engine import calculate_ph_electricity_bill, get_energy_insights
 from scraper import start_scheduler, scrape_utility_rates
 
 app = FastAPI(
@@ -184,3 +183,13 @@ async def upload_ebill(file: UploadFile = File(...), db: Session = Depends(get_d
 
     except Exception as err:
         raise HTTPException(status_code=500, detail=f"Failed to process PDF: {str(err)}")
+    class InsightRequest(BaseModel):
+    prompt_text: str
+
+@app.post("/api/insights")
+def generate_insights(payload: InsightRequest):
+    try:
+        report = get_energy_insights(payload.prompt_text)
+        return {"status": "success", "insights": report}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
