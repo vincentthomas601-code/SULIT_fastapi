@@ -101,7 +101,7 @@ def calculate_ph_electricity_bill(
     }
 def get_energy_insights(nilm_summary_text: str) -> str:
     client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-
+    
     system_instruction = (
         "You are SULIT Energy AI, an expert Non-Intrusive Load Monitoring (NILM) "
         "and energy efficiency consultant. Analyze appliance-level electricity "
@@ -109,7 +109,7 @@ def get_energy_insights(nilm_summary_text: str) -> str:
     )
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         contents=nilm_summary_text,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
