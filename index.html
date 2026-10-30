@@ -120,21 +120,34 @@
       </div>
 
     </div>
+
     <!-- AI Energy Insights Card -->
-<div style="margin-top: 24px; background-color: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-        <h3 style="margin: 0; color: #f8fafc; font-size: 1.1rem;">🤖 Gemini AI Energy Insights</h3>
-        <button id="aiBtn" onclick="fetchAIInsights()" style="background-color: #2563eb; color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600;">
-            Generate AI Report
-        </button>
+    <div style="margin-top: 24px; background-color: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h3 style="margin: 0; color: #f8fafc; font-size: 1.1rem;">🤖 Gemini AI Energy Insights</h3>
+            <button id="aiBtn" onclick="fetchAIInsights()" style="background-color: #2563eb; color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600;">
+                Generate AI Report
+            </button>
+        </div>
+        <div id="aiOutput" style="background-color: #0f172a; padding: 16px; border-radius: 8px; font-family: monospace; font-size: 0.9rem; line-height: 1.6; color: #cbd5e1; white-space: pre-wrap; min-height: 100px;">
+            Click "Generate AI Report" to get personalized efficiency advice based on your current live consumption.
+        </div>
     </div>
-    <div id="aiOutput" style="background-color: #0f172a; padding: 16px; border-radius: 8px; font-family: monospace; font-size: 0.9rem; line-height: 1.6; color: #cbd5e1; white-space: pre-wrap; min-height: 100px;">
-        Click "Generate AI Report" to get personalized efficiency advice based on your current 411 kWh usage.
-    </div>
-</div>
   </div>
 
   <script>
+    // Generates or retrieves unique device ID from browser storage
+    function getDeviceId() {
+      let deviceId = localStorage.getItem('sulit_device_id');
+      if (!deviceId) {
+        deviceId = 'dev_' + crypto.randomUUID();
+        localStorage.setItem('sulit_device_id', deviceId);
+      }
+      return deviceId;
+    }
+
+    let currentBillingData = null;
+
     async function fetchProviders() {
       const res = await fetch('/api/v1/providers');
       const data = await res.json();
@@ -150,8 +163,11 @@
 
     async function fetchLiveBilling() {
       try {
-        const res = await fetch('/api/v1/billing/live');
+        const res = await fetch('/api/v1/billing/live', {
+          headers: { 'X-Device-ID': getDeviceId() }
+        });
         const data = await res.json();
+        currentBillingData = data;
 
         document.getElementById('card-kwh').innerHTML = `${data.accumulated_kwh} <span class="text-sm font-normal text-slate-400">kWh</span>`;
         document.getElementById('card-bill').innerText = `₱ ${data.total_bill_php.toFixed(2)}`;
@@ -183,7 +199,10 @@
       const selected = document.getElementById('provider-select').value;
       await fetch('/api/v1/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-Device-ID': getDeviceId()
+        },
         body: JSON.stringify({ selected_provider: selected })
       });
       fetchLiveBilling();
@@ -193,7 +212,10 @@
       document.getElementById('custom-rate-container').classList.toggle('hidden', !isCustom);
       await fetch('/api/v1/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-Device-ID': getDeviceId()
+        },
         body: JSON.stringify({ use_custom_rate: isCustom })
       });
       fetchLiveBilling();
@@ -204,7 +226,10 @@
       if (isNaN(val) || val <= 0) return alert('Please enter a valid rate.');
       await fetch('/api/v1/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-Device-ID': getDeviceId()
+        },
         body: JSON.stringify({ use_custom_rate: true, custom_rate: val })
       });
       fetchLiveBilling();
@@ -220,7 +245,11 @@
       status.innerText = 'Processing PDF...';
 
       try {
-        const res = await fetch('/api/v1/billing/upload-ebill', { method: 'POST', body: formData });
+        const res = await fetch('/api/v1/billing/upload-ebill', { 
+          method: 'POST', 
+          headers: { 'X-Device-ID': getDeviceId() },
+          body: formData 
+        });
         const data = await res.json();
         if (res.ok) {
           status.innerText = data.message;
@@ -232,45 +261,56 @@
         status.innerText = 'Failed to upload PDF.';
       }
     }
-async function fetchAIInsights() {
-    const outputDiv = document.getElementById('aiOutput');
-    const btn = document.getElementById('aiBtn');
 
-    outputDiv.innerText = "⏳ SULIT AI is analyzing your consumption patterns and tariff rates...";
-    btn.disabled = true;
+    async function fetchAIInsights() {
+      const outputDiv = document.getElementById('aiOutput');
+      const btn = document.getElementById('aiBtn');
 
-    const payloadData = {
+      outputDiv.innerText = "⏳ SULIT AI is analyzing your consumption patterns and tariff rates...";
+      btn.disabled = true;
+
+      const kwh = currentBillingData ? currentBillingData.accumulated_kwh : 0;
+      const bill = currentBillingData ? currentBillingData.total_bill_php.toFixed(2) : '0.00';
+      const rate = currentBillingData ? currentBillingData.effective_rate_per_kwh.toFixed(4) : '0.0000';
+      const provider = currentBillingData ? currentBillingData.provider_name : 'Default Provider';
+
+      const payloadData = {
+        device_id: getDeviceId(),
         prompt_text: `
         Analyze this household energy usage:
-        - Consumption: 411 kWh
-        - Current Estimated Bill: ₱ 6,252.87
-        - Active Rate: ₱ 15.2138 / kWh
-        - Distribution Provider: Batangas I Electric Cooperative, Inc. (BATELEC I)
+        - Consumption: ${kwh} kWh
+        - Current Estimated Bill: ₱ ${bill}
+        - Active Rate: ₱ ${rate} / kWh
+        - Distribution Provider: ${provider}
 
         Provide a concise cost breakdown evaluation, waste detection advice, and 3 specific steps to lower this bill.
         `
-    };
+      };
 
-    try {
+      try {
         const response = await fetch('/api/insights', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payloadData)
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-Device-ID': getDeviceId()
+          },
+          body: JSON.stringify(payloadData)
         });
 
         const data = await response.json();
 
         if (data.status === 'success') {
-            outputDiv.innerText = data.insights;
+          outputDiv.innerText = data.insights;
         } else {
-            outputDiv.innerText = "Error generating insights: " + (data.detail || "Unknown error");
+          outputDiv.innerText = "Error generating insights: " + (data.detail || "Unknown error");
         }
-    } catch (err) {
+      } catch (err) {
         outputDiv.innerText = "Failed to connect to AI backend: " + err.message;
-    } finally {
+      } finally {
         btn.disabled = false;
+      }
     }
-}
+
     fetchProviders().then(() => fetchLiveBilling());
     setInterval(fetchLiveBilling, 3000);
   </script>
