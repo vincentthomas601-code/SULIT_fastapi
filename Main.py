@@ -87,13 +87,19 @@ def get_live_billing(
 ):
     settings = get_or_create_device_settings(x_device_id, db)
 
+    # Fetch latest telemetry log for this device
     latest_telemetry = (
         db.query(TelemetryLog)
         .filter(TelemetryLog.device_id == x_device_id)
         .order_by(TelemetryLog.id.desc())
         .first()
     )
-    accumulated_kwh = latest_telemetry.accumulated_kwh if latest_telemetry else 0.0
+
+    # TEMPORARY PLACEHOLDER: Use 310.0 kWh if no log exists or value is 0
+    if latest_telemetry and latest_telemetry.accumulated_kwh > 0:
+        accumulated_kwh = latest_telemetry.accumulated_kwh
+    else:
+        accumulated_kwh = 310.0
 
     provider_code = settings.selected_provider or "MERALCO"
     rule = db.query(ProviderRule).filter(ProviderRule.provider_code == provider_code).first()
@@ -119,23 +125,23 @@ def get_live_billing(
         provider_rule=rule
     )
 
-    # Safely populate and format all keys required by index.html
-    billing_breakdown.update({
-        "accumulated_kwh": accumulated_kwh,
-        "total_bill_php": billing_breakdown.get("total_bill_php", billing_breakdown.get("total_bill", 0.0)),
-        "effective_rate_per_kwh": billing_breakdown.get("effective_rate_per_kwh", billing_breakdown.get("effective_rate", active_rate)),
-        "variable_charge_php": billing_breakdown.get("variable_charge_php", billing_breakdown.get("variable_charge", 0.0)),
-        "distribution_charge_php": billing_breakdown.get("distribution_charge_php", billing_breakdown.get("distribution_charge", 0.0)),
-        "pre_discount_subtotal_php": billing_breakdown.get("pre_discount_subtotal_php", billing_breakdown.get("pre_discount_subtotal", 0.0)),
-        "lifeline_discount_percentage": billing_breakdown.get("lifeline_discount_percentage", 0.0),
-        "lifeline_discount_php": billing_breakdown.get("lifeline_discount_php", billing_breakdown.get("lifeline_discount", 0.0)),
-        "energy_tax_php": billing_breakdown.get("energy_tax_php", billing_breakdown.get("energy_tax", 0.0)),
+    # Construct complete payload expected by index.html
+    return {
+        "accumulated_kwh": round(accumulated_kwh, 2),
+        "total_bill_php": billing_breakdown.get("total_bill_php", 0.0),
+        "effective_rate_per_kwh": billing_breakdown.get("effective_rate_per_kwh", active_rate),
+        "variable_charge_php": billing_breakdown.get("variable_charge_php", 0.0),
+        "distribution_charge_php": billing_breakdown.get("distribution_charge_php", 0.0),
+        "pre_discount_subtotal_php": billing_breakdown.get("pre_discount_subtotal_php", 0.0),
+        "lifeline_discount_percentage": billing_breakdown.get("lifeline_discount_percentage", 0),
+        "lifeline_discount_php": billing_breakdown.get("lifeline_discount_php", 0.0),
+        "energy_tax_php": billing_breakdown.get("energy_tax_php", 0.0),
         "provider_code": provider_code,
         "provider_name": rule.provider_name if rule else "Default Provider",
         "region": rule.region if rule else "Luzon Grid",
         "use_custom_rate": settings.use_custom_rate,
         "rate_status": rate_status
-    })
+    }
 
     return billing_breakdown
 
