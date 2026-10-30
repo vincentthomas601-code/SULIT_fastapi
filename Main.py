@@ -11,6 +11,7 @@ from database import Base, engine, get_db
 from models import ProviderRule, ProviderRate, UserSettings, TelemetryLog
 from billing_engine import calculate_ph_electricity_bill, get_energy_insights
 from scraper import start_scheduler, scrape_utility_rates
+from sqlalchemy import text
 
 app = FastAPI(
     title="Philippine NILM & Smart Billing Backend",
@@ -56,6 +57,20 @@ def get_or_create_device_settings(device_id: str, db: Session) -> UserSettings:
 
 @app.on_event("startup")
 def startup_event():
+    # Auto-migrate missing columns for existing SQLite database file
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE user_settings ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
+            conn.commit()
+        except Exception:
+            pass
+            
+        try:
+            conn.execute(text("ALTER TABLE telemetry_logs ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
+            conn.commit()
+        except Exception:
+            pass
+
     Base.metadata.create_all(bind=engine)
     db = next(get_db())
 
