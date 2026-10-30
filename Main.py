@@ -85,10 +85,8 @@ def get_live_billing(
     x_device_id: str = Header("default_device", alias="X-Device-ID"),
     db: Session = Depends(get_db)
 ):
-    # Fetch settings scoped to device
     settings = get_or_create_device_settings(x_device_id, db)
 
-    # Fetch latest telemetry log scoped exclusively to this device_id
     latest_telemetry = (
         db.query(TelemetryLog)
         .filter(TelemetryLog.device_id == x_device_id)
@@ -121,7 +119,17 @@ def get_live_billing(
         provider_rule=rule
     )
 
+    # Safely populate and format all keys required by index.html
     billing_breakdown.update({
+        "accumulated_kwh": accumulated_kwh,
+        "total_bill_php": billing_breakdown.get("total_bill_php", billing_breakdown.get("total_bill", 0.0)),
+        "effective_rate_per_kwh": billing_breakdown.get("effective_rate_per_kwh", billing_breakdown.get("effective_rate", active_rate)),
+        "variable_charge_php": billing_breakdown.get("variable_charge_php", billing_breakdown.get("variable_charge", 0.0)),
+        "distribution_charge_php": billing_breakdown.get("distribution_charge_php", billing_breakdown.get("distribution_charge", 0.0)),
+        "pre_discount_subtotal_php": billing_breakdown.get("pre_discount_subtotal_php", billing_breakdown.get("pre_discount_subtotal", 0.0)),
+        "lifeline_discount_percentage": billing_breakdown.get("lifeline_discount_percentage", 0.0),
+        "lifeline_discount_php": billing_breakdown.get("lifeline_discount_php", billing_breakdown.get("lifeline_discount", 0.0)),
+        "energy_tax_php": billing_breakdown.get("energy_tax_php", billing_breakdown.get("energy_tax", 0.0)),
         "provider_code": provider_code,
         "provider_name": rule.provider_name if rule else "Default Provider",
         "region": rule.region if rule else "Luzon Grid",

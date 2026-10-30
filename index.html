@@ -172,38 +172,48 @@
     }
 
     async function fetchLiveBilling() {
-      try {
-        const res = await fetch('/api/v1/billing/live', {
-          headers: { 'X-Device-ID': getDeviceId() }
-        });
-        const data = await res.json();
-        currentBillingData = data;
-
-        document.getElementById('card-kwh').innerHTML = `${data.accumulated_kwh} <span class="text-sm font-normal text-slate-400">kWh</span>`;
-        document.getElementById('card-bill').innerText = `₱ ${data.total_bill_php.toFixed(2)}`;
-        document.getElementById('card-rate').innerHTML = `₱ ${data.effective_rate_per_kwh.toFixed(4)} <span class="text-sm font-normal text-slate-400">/ kWh</span>`;
-        document.getElementById('card-provider-info').innerText = `Provider: ${data.provider_name} (${data.region})`;
-
-        const badge = document.getElementById('rate-badge');
-        badge.innerText = `STATUS: ${data.rate_status}`;
-
-        document.getElementById('bk-variable').innerText = `₱ ${data.variable_charge_php.toFixed(2)}`;
-        document.getElementById('bk-distribution').innerText = `₱ ${data.distribution_charge_php.toFixed(2)}`;
-        document.getElementById('bk-subtotal').innerText = `₱ ${data.pre_discount_subtotal_php.toFixed(2)}`;
-        document.getElementById('bk-lifeline-pct').innerText = data.lifeline_discount_percentage;
-        document.getElementById('bk-lifeline').innerText = `- ₱ ${data.lifeline_discount_php.toFixed(2)}`;
-        document.getElementById('bk-tax').innerText = `+ ₱ ${data.energy_tax_php.toFixed(2)}`;
-        document.getElementById('bk-total').innerText = `₱ ${data.total_bill_php.toFixed(2)}`;
-
-        if (data.use_custom_rate) {
-          document.querySelector('input[name="rate_mode"][value="custom"]').checked = true;
-          document.getElementById('custom-rate-container').classList.remove('hidden');
-        }
-
-      } catch (err) {
-        console.error('Error fetching live billing data:', err);
-      }
+  try {
+    const res = await fetch('/api/v1/billing/live', {
+      headers: { 'X-Device-ID': getDeviceId() }
+    });
+    if (!res.ok) {
+      console.error("Failed to load billing:", res.status);
+      return;
     }
+    const data = await res.json();
+    currentBillingData = data;
+
+    const kwh = data.accumulated_kwh ?? 0;
+    const totalBill = data.total_bill_php ?? 0;
+    const rate = data.effective_rate_per_kwh ?? 0;
+    const providerName = data.provider_name || 'Default Provider';
+    const region = data.region || 'Luzon Grid';
+
+    document.getElementById('card-kwh').innerHTML = `${kwh} <span class="text-sm font-normal text-slate-400">kWh</span>`;
+    document.getElementById('card-bill').innerText = `₱ ${Number(totalBill).toFixed(2)}`;
+    document.getElementById('card-rate').innerHTML = `₱ ${Number(rate).toFixed(4)} <span class="text-sm font-normal text-slate-400">/ kWh</span>`;
+    document.getElementById('card-provider-info').innerText = `Provider: ${providerName} (${region})`;
+
+    const badge = document.getElementById('rate-badge');
+    badge.innerText = `STATUS: ${data.rate_status || 'OK'}`;
+
+    document.getElementById('bk-variable').innerText = `₱ ${Number(data.variable_charge_php || 0).toFixed(2)}`;
+    document.getElementById('bk-distribution').innerText = `₱ ${Number(data.distribution_charge_php || 0).toFixed(2)}`;
+    document.getElementById('bk-subtotal').innerText = `₱ ${Number(data.pre_discount_subtotal_php || 0).toFixed(2)}`;
+    document.getElementById('bk-lifeline-pct').innerText = data.lifeline_discount_percentage || 0;
+    document.getElementById('bk-lifeline').innerText = `- ₱ ${Number(data.lifeline_discount_php || 0).toFixed(2)}`;
+    document.getElementById('bk-tax').innerText = `+ ₱ ${Number(data.energy_tax_php || 0).toFixed(2)}`;
+    document.getElementById('bk-total').innerText = `₱ ${Number(totalBill).toFixed(2)}`;
+
+    if (data.use_custom_rate) {
+      document.querySelector('input[name="rate_mode"][value="custom"]').checked = true;
+      document.getElementById('custom-rate-container').classList.remove('hidden');
+    }
+
+  } catch (err) {
+    console.error('Error fetching live billing data:', err);
+  }
+}
 
     async function updateProviderSettings() {
       const selected = document.getElementById('provider-select').value;
