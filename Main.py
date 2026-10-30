@@ -27,7 +27,7 @@ app.add_middleware(
 
 class TelemetryInput(BaseModel):
     device_id: str = Field(..., example="ESP32_01")
-    kwh: float = Field(..., example=14.5)
+    kwh: float = Field(..., example=310.0)
 
 class UserSettingsUpdate(BaseModel):
     selected_provider: Optional[str] = None
@@ -95,11 +95,14 @@ def get_live_billing(
         .first()
     )
 
-    # TEMPORARY PLACEHOLDER: Use 310.0 kWh if no log exists or value is 0
-    if latest_telemetry and latest_telemetry.accumulated_kwh > 0:
-        accumulated_kwh = latest_telemetry.accumulated_kwh
-    else:
-        accumulated_kwh = 310.0
+    # TEMPORARY PLACEHOLDER: Auto-insert a 310.0 kWh fake ESP32 database entry if no log exists
+    if not latest_telemetry:
+        latest_telemetry = TelemetryLog(device_id=x_device_id, accumulated_kwh=310.0)
+        db.add(latest_telemetry)
+        db.commit()
+        db.refresh(latest_telemetry)
+
+    accumulated_kwh = latest_telemetry.accumulated_kwh
 
     provider_code = settings.selected_provider or "MERALCO"
     rule = db.query(ProviderRule).filter(ProviderRule.provider_code == provider_code).first()
@@ -142,8 +145,6 @@ def get_live_billing(
         "use_custom_rate": settings.use_custom_rate,
         "rate_status": rate_status
     }
-
-    return billing_breakdown
 
 
 @app.get("/api/v1/providers")
