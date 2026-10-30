@@ -2,7 +2,7 @@ import io
 import re
 from typing import Optional
 import pdfplumber
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -34,6 +34,25 @@ class UserSettingsUpdate(BaseModel):
     use_custom_rate: Optional[bool] = None
     custom_rate: Optional[float] = None
 
+class InsightRequest(BaseModel):
+    device_id: str
+    prompt_text: str
+
+
+def get_or_create_device_settings(device_id: str, db: Session) -> UserSettings:
+    """Helper function to fetch or create settings tied exclusively to a device_id."""
+    settings = db.query(UserSettings).filter(UserSettings.device_id == device_id).first()
+    if not settings:
+        settings = UserSettings(
+            device_id=device_id,
+            selected_provider="MERALCO",
+            use_custom_rate=False
+        )
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
 
 @app.on_event("startup")
 def startup_event():
@@ -44,10 +63,6 @@ def startup_event():
     if not db.query(ProviderRule).first():
         scrape_utility_rates()
 
-    if not db.query(UserSettings).first():
-        db.add(UserSettings(selected_provider="MERALCO", use_custom_rate=False))
-        db.commit()
-
     start_scheduler()
 
 
@@ -56,6 +71,7 @@ def serve_dashboard():
     """Serves index.html UI at root URL."""
     return FileResponse("index.html")
 
+
 @app.post("/api/v1/telemetry")
 def ingest_telemetry(data: TelemetryInput, db: Session = Depends(get_db)):
     log_entry = TelemetryLog(device_id=data.device_id, accumulated_kwh=data.kwh)
@@ -63,16 +79,25 @@ def ingest_telemetry(data: TelemetryInput, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "SUCCESS", "message": "Telemetry log stored successfully."}
 
-@app.get("/api/v1/billing/live")
-def get_live_billing(db: Session = Depends(get_db)):
-    settings = db.query(UserSettings).first()
-    if not settings:
-        raise HTTPException(status_code=404, detail="User settings not found.")
 
-    latest_telemetry = db.query(TelemetryLog).order_by(TelemetryLog.id.desc()).first()
+@app.get("/api/v1/billing/live")
+def get_live_billing(
+    x_device_id: str = Header("default_device", alias="X-Device-ID"),
+    db: Session = Depends(get_db)
+):
+    # Fetch settings scoped to device
+    settings = get_or_create_device_settings(x_device_id, db)
+
+    # Fetch latest telemetry log scoped exclusively to this device_id
+    latest_telemetry = (
+        db.query(TelemetryLog)
+        .filter(TelemetryLog.device_id == x_device_id)
+        .order_by(TelemetryLog.id.desc())
+        .first()
+    )
     accumulated_kwh = latest_telemetry.accumulated_kwh if latest_telemetry else 0.0
 
-    provider_code = settings.selected_provider
+    provider_code = settings.selected_provider or "MERALCO"
     rule = db.query(ProviderRule).filter(ProviderRule.provider_code == provider_code).first()
     if not rule:
         rule = db.query(ProviderRule).first()
@@ -98,13 +123,14 @@ def get_live_billing(db: Session = Depends(get_db)):
 
     billing_breakdown.update({
         "provider_code": provider_code,
-        "provider_name": rule.provider_name,
-        "region": rule.region,
+        "provider_name": rule.provider_name if rule else "Default Provider",
+        "region": rule.region if rule else "Luzon Grid",
         "use_custom_rate": settings.use_custom_rate,
         "rate_status": rate_status
     })
 
     return billing_breakdown
+
 
 @app.get("/api/v1/providers")
 def get_providers(db: Session = Depends(get_db)):
@@ -119,12 +145,14 @@ def get_providers(db: Session = Depends(get_db)):
         for p in providers
     ]
 
+
 @app.post("/api/v1/settings")
-def update_settings(payload: UserSettingsUpdate, db: Session = Depends(get_db)):
-    settings = db.query(UserSettings).first()
-    if not settings:
-        settings = UserSettings()
-        db.add(settings)
+def update_settings(
+    payload: UserSettingsUpdate,
+    x_device_id: str = Header("default_device", alias="X-Device-ID"),
+    db: Session = Depends(get_db)
+):
+    settings = get_or_create_device_settings(x_device_id, db)
 
     if payload.selected_provider is not None:
         settings.selected_provider = payload.selected_provider
@@ -134,10 +162,15 @@ def update_settings(payload: UserSettingsUpdate, db: Session = Depends(get_db)):
         settings.custom_rate = payload.custom_rate
 
     db.commit()
-    return {"status": "SUCCESS", "message": "User settings updated successfully."}
+    return {"status": "SUCCESS", "message": f"User settings updated successfully for device {x_device_id}."}
+
 
 @app.post("/api/v1/billing/upload-ebill")
-async def upload_ebill(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_ebill(
+    file: UploadFile = File(...),
+    x_device_id: str = Header("default_device", alias="X-Device-ID"),
+    db: Session = Depends(get_db)
+):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
@@ -168,7 +201,8 @@ async def upload_ebill(file: UploadFile = File(...), db: Session = Depends(get_d
 
         effective_rate = round(total_amount / total_kwh, 4)
 
-        settings = db.query(UserSettings).first()
+        # Apply settings update exclusively to the uploader's device_id
+        settings = get_or_create_device_settings(x_device_id, db)
         settings.use_custom_rate = True
         settings.custom_rate = effective_rate
         db.commit()
@@ -178,20 +212,19 @@ async def upload_ebill(file: UploadFile = File(...), db: Session = Depends(get_d
             "parsed_amount_php": total_amount,
             "parsed_kwh": total_kwh,
             "calculated_effective_rate_php": effective_rate,
-            "message": f"Successfully parsed e-Bill. Effective rate set to ₱{effective_rate}/kWh."
+            "message": f"Successfully parsed e-Bill. Effective rate set to ₱{effective_rate}/kWh for device {x_device_id}."
         }
 
     except Exception as err:
         raise HTTPException(status_code=500, detail=f"Failed to process PDF: {str(err)}")
-class InsightRequest(BaseModel):
-    prompt_text: str
 
 
 @app.post("/api/insights")
-def generate_insights(payload: InsightRequest):
+def generate_insights(payload: InsightRequest, db: Session = Depends(get_db)):
+    settings = get_or_create_device_settings(payload.device_id, db)
+
     try:
         report = get_energy_insights(payload.prompt_text)
         return {"status": "success", "insights": report}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) 
-    
+        raise HTTPException(status_code=500, detail=str(e))

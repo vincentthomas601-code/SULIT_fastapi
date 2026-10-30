@@ -3,9 +3,7 @@ from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime
 from database import Base
 
 class ProviderRule(Base):
-    """
-    Stores ERC-approved distribution tier matrices and base distribution fees.
-    """
+    """Stores ERC-approved distribution tier matrices and base distribution fees."""
     __tablename__ = "provider_rules"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -13,7 +11,7 @@ class ProviderRule(Base):
     provider_name = Column(String, nullable=False)
     region = Column(String, nullable=False)
     base_distribution_fee = Column(Float, default=0.9803)
-    
+
     tier_1_max_kwh = Column(Float, default=200.0)
     tier_1_rate = Column(Float, default=0.9803)
     tier_2_max_kwh = Column(Float, default=300.0)
@@ -24,9 +22,7 @@ class ProviderRule(Base):
 
 
 class ProviderRate(Base):
-    """
-    Stores monthly scraped 200 kWh benchmark residential rates (₱/kWh).
-    """
+    """Stores monthly scraped 200 kWh benchmark residential rates (₱/kWh)."""
     __tablename__ = "provider_rates"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -38,21 +34,17 @@ class ProviderRate(Base):
 
 
 class UserSettings(Base):
-    """
-    Stores user provider selection and manual/custom rate overrides.
-    """
     __tablename__ = "user_settings"
 
     id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String, unique=True, index=True, nullable=False)
     selected_provider = Column(String, default="MERALCO")
     use_custom_rate = Column(Boolean, default=False)
     custom_rate = Column(Float, nullable=True)
 
 
 class TelemetryLog(Base):
-    """
-    Time-series logs sent from ESP32 / PZEM-004T.
-    """
+    """Time-series logs sent from ESP32 / PZEM-004T."""
     __tablename__ = "telemetry_logs"
 
     id = Column(Integer, primary_key=True, index=True)
