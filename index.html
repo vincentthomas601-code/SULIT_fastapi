@@ -76,7 +76,7 @@
 
       <!-- Settings Panel -->
       <div class="bg-slate-800 border border-slate-700/60 rounded-xl p-6 shadow-lg space-y-6">
-        <h2 class="text-lg font-semibold text-white">Tariff Configuration</h2>
+        <h2 class="text-lg font-semibold text-white">Tariff & Hardware Simulator</h2>
 
         <!-- Provider Select -->
         <div>
@@ -115,6 +115,16 @@
           <input type="file" id="pdf-upload" accept="application/pdf" class="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-700 file:text-slate-200 hover:file:bg-slate-600 cursor-pointer">
           <button onclick="uploadPdf()" class="mt-3 w-full bg-slate-700 hover:bg-slate-600 text-slate-200 py-2 rounded-lg text-xs font-semibold transition">Process PDF & Set Rate</button>
           <div id="upload-status" class="text-xs mt-2 text-slate-400"></div>
+        </div>
+
+        <!-- Hardware Simulator Control -->
+        <div class="pt-4 border-t border-slate-700/50">
+          <label class="block text-xs text-slate-400 uppercase tracking-wider mb-2">⚡ Mock ESP32 Telemetry Feed</label>
+          <div class="flex space-x-2">
+            <input type="number" id="mock-kwh-input" value="310" step="0.1" class="w-1/2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-sky-500" placeholder="e.g. 310">
+            <button onclick="sendMockTelemetry()" class="w-1/2 bg-amber-600 hover:bg-amber-500 text-white py-2 rounded-lg text-xs font-semibold transition">Push Mock Telemetry</button>
+          </div>
+          <div id="telemetry-status" class="text-xs mt-2 text-slate-400">Push a test value to simulate ESP32 transmission.</div>
         </div>
 
       </div>
@@ -259,6 +269,39 @@
         }
       } catch (e) {
         status.innerText = 'Failed to upload PDF.';
+      }
+    }
+
+    async function sendMockTelemetry() {
+      const input = document.getElementById('mock-kwh-input');
+      const status = document.getElementById('telemetry-status');
+      const kwhVal = parseFloat(input.value);
+
+      if (isNaN(kwhVal) || kwhVal < 0) {
+        return alert('Please enter a valid kWh value.');
+      }
+
+      status.innerText = `Sending ${kwhVal} kWh to telemetry...`;
+
+      try {
+        const res = await fetch('/api/v1/telemetry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            device_id: getDeviceId(),
+            kwh: kwhVal
+          })
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+          status.innerText = `✅ Telemetry stored: ${kwhVal} kWh`;
+          fetchLiveBilling();
+        } else {
+          status.innerText = `Error: ${data.detail || 'Failed to send telemetry.'}`;
+        }
+      } catch (err) {
+        status.innerText = 'Failed to connect to telemetry backend.';
       }
     }
 
