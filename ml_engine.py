@@ -5,6 +5,7 @@ from dsp_features import APPLIANCE_CLASSES
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "whited_1d_resnet_150ep.onnx")
 
+
 class NILMClassifier:
     def __init__(self, model_path: str = MODEL_PATH):
         self.session = None
@@ -27,7 +28,9 @@ class NILMClassifier:
             else:
                 return "Lighting", 0.75
 
-        input_data = np.expand_dims(feature_vector, axis=0).astype(np.float32)
+        # Reshape 22D feature vector to 3D tensor (1, 1, 22) required for 1D ResNet Conv1d
+        input_data = np.array(feature_vector, dtype=np.float32).reshape(1, 1, -1)
+        
         outputs = self.session.run(None, {self.input_name: input_data})
         logits = outputs[0][0]
 
@@ -37,5 +40,6 @@ class NILMClassifier:
         confidence = float(probabilities[predicted_idx])
 
         return APPLIANCE_CLASSES[predicted_idx], round(confidence, 4)
+
 
 classifier = NILMClassifier()
