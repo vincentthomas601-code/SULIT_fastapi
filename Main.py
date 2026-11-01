@@ -1,5 +1,3 @@
-# Main.py
-
 import io
 import re
 from typing import Optional
@@ -359,12 +357,14 @@ def generate_insights(payload: InsightRequest, db: Session = Depends(get_db)):
         return {"status": "success", "insights": report}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    @app.get("/api/v1/appliances/active")
+
+
+@app.get("/api/v1/appliances/active")
 def get_active_appliances(
     x_device_id: str = Header("default_device", alias="X-Device-ID"),
     db: Session = Depends(get_db)
 ):
-    """Returns currently running appliances for the device."""
+    """Returns currently running appliances for the device session."""
     active_sessions = db.query(ActiveApplianceSession).filter(
         ActiveApplianceSession.device_id == x_device_id,
         ActiveApplianceSession.is_active == True
@@ -386,7 +386,7 @@ def get_recent_events(
     x_device_id: str = Header("default_device", alias="X-Device-ID"),
     db: Session = Depends(get_db)
 ):
-    """Returns recent switching event logs for audit."""
+    """Returns recent transient switching event logs for audit."""
     events = (
         db.query(ApplianceEvent)
         .filter(ApplianceEvent.device_id == x_device_id)
