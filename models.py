@@ -1,6 +1,9 @@
+# models.py
+
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime
 from database import Base
+
 
 class ProviderRule(Base):
     """Stores ERC-approved distribution tier matrices and base distribution fees."""
@@ -51,3 +54,28 @@ class TelemetryLog(Base):
     device_id = Column(String, index=True, nullable=False)
     accumulated_kwh = Column(Float, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
+
+
+class ApplianceEvent(Base):
+    """Logs classified appliance switching events (TURN_ON / TURN_OFF)."""
+    __tablename__ = "appliance_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String, index=True, nullable=False)
+    appliance_name = Column(String, nullable=False)
+    event_type = Column(String, nullable=False)  # "TURN_ON" or "TURN_OFF"
+    delta_power_w = Column(Float, nullable=False)
+    confidence = Column(Float, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+
+class ActiveApplianceSession(Base):
+    """Tracks currently active appliances per device for per-appliance cost attribution."""
+    __tablename__ = "active_appliance_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String, index=True, nullable=False)
+    appliance_name = Column(String, nullable=False)
+    power_draw_w = Column(Float, nullable=False)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)

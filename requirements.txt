@@ -1,6 +1,5 @@
 fastapi
 uvicorn
-torch
 sqlalchemy
 pydantic
 google-genai
@@ -9,3 +8,6 @@ pdfplumber
 beautifulsoup4
 requests
 apscheduler
+numpy
+scipy
+onnxruntime
