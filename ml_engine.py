@@ -10,36 +10,43 @@ class NILMClassifier:
     def __init__(self, model_path: str = MODEL_PATH):
         self.session = None
         if os.path.exists(model_path):
-            self.session = ort.InferenceSession(model_path)
-            self.input_name = self.session.get_inputs()[0].name
-            print(f"[NILM Engine] Successfully loaded ONNX model from '{model_path}'.")
+            try:
+                self.session = ort.InferenceSession(model_path)
+                self.input_name = self.session.get_inputs()[0].name
+                print(f"[NILM Engine] Successfully loaded ONNX model from '{model_path}'.")
+            except Exception as e:
+                print(f"[NILM Engine] Notice: Failed to initialize ONNX session ({e}). Fallback active.")
+                self.session = None
         else:
             print(f"[NILM Engine] Notice: '{model_path}' not found. Rule-based fallback active.")
 
     def predict(self, feature_vector: np.ndarray) -> tuple[str, float]:
-        if self.session is None:
-            delta_p = feature_vector[0]
-            if delta_p >= 800:
-                return "Air Conditioner", 0.92
-            elif delta_p >= 300:
-                return "Fridge", 0.88
-            elif delta_p >= 100:
-                return "Fan", 0.80
-            else:
-                return "Lighting", 0.75
+        if self.session is not None:
+            try:
+                # Reshape 22D vector into 3D tensor (1, 1, 22) required by 1D ResNet Conv1d
+                input_data = np.array(feature_vector, dtype=np.float32).reshape(1, 1, -1)
+                outputs = self.session.run(None, {self.input_name: input_data})
+                logits = outputs[0][0]
 
-        # Reshape 22D feature vector to 3D tensor (1, 1, 22) required for 1D ResNet Conv1d
-        input_data = np.array(feature_vector, dtype=np.float32).reshape(1, 1, -1)
-        
-        outputs = self.session.run(None, {self.input_name: input_data})
-        logits = outputs[0][0]
+                exp_logits = np.exp(logits - np.max(logits))
+                probabilities = exp_logits / np.sum(exp_logits)
+                predicted_idx = int(np.argmax(probabilities))
+                confidence = float(probabilities[predicted_idx])
 
-        exp_logits = np.exp(logits - np.max(logits))
-        probabilities = exp_logits / np.sum(exp_logits)
-        predicted_idx = int(np.argmax(probabilities))
-        confidence = float(probabilities[predicted_idx])
+                return APPLIANCE_CLASSES[predicted_idx], round(confidence, 4)
+            except Exception as e:
+                print(f"[NILM Engine] ONNX Inference warning ({e}). Using rule-based fallback.")
 
-        return APPLIANCE_CLASSES[predicted_idx], round(confidence, 4)
+        # Rule-based fallback if ONNX session fails or throws a runtime error
+        delta_p = feature_vector[0] if len(feature_vector) > 0 else 0.0
+        if delta_p >= 800:
+            return "Air Conditioner", 0.92
+        elif delta_p >= 300:
+            return "Fridge", 0.88
+        elif delta_p >= 100:
+            return "Fan", 0.80
+        else:
+            return "Lighting", 0.75
 
 
 classifier = NILMClassifier()
