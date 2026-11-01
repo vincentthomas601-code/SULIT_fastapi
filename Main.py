@@ -359,3 +359,50 @@ def generate_insights(payload: InsightRequest, db: Session = Depends(get_db)):
         return {"status": "success", "insights": report}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    @app.get("/api/v1/appliances/active")
+def get_active_appliances(
+    x_device_id: str = Header("default_device", alias="X-Device-ID"),
+    db: Session = Depends(get_db)
+):
+    """Returns currently running appliances for the device."""
+    active_sessions = db.query(ActiveApplianceSession).filter(
+        ActiveApplianceSession.device_id == x_device_id,
+        ActiveApplianceSession.is_active == True
+    ).all()
+
+    return [
+        {
+            "id": s.id,
+            "appliance_name": s.appliance_name,
+            "power_draw_w": s.power_draw_w,
+            "started_at": s.started_at.isoformat()
+        }
+        for s in active_sessions
+    ]
+
+
+@app.get("/api/v1/events/recent")
+def get_recent_events(
+    x_device_id: str = Header("default_device", alias="X-Device-ID"),
+    db: Session = Depends(get_db)
+):
+    """Returns recent switching event logs for audit."""
+    events = (
+        db.query(ApplianceEvent)
+        .filter(ApplianceEvent.device_id == x_device_id)
+        .order_by(ApplianceEvent.id.desc())
+        .limit(20)
+        .all()
+    )
+
+    return [
+        {
+            "id": e.id,
+            "appliance_name": e.appliance_name,
+            "event_type": e.event_type,
+            "delta_power_w": e.delta_power_w,
+            "confidence": e.confidence,
+            "timestamp": e.timestamp.isoformat()
+        }
+        for e in events
+    ]
