@@ -307,10 +307,30 @@ def get_live_billing(
     if not rule:
         rule = db.query(ProviderRule).first()
 
+    # Manual / e-Bill Override Mode: Treat custom rate as an ALL-INCLUSIVE rate
     if settings.use_custom_rate and settings.custom_rate and settings.custom_rate > 0:
         active_rate = settings.custom_rate
         rate_status = "CUSTOM_OVERRIDE"
+        
+        # Directly compute all-inclusive bill (kWh * Custom Rate)
+        total_bill = round(accumulated_kwh * active_rate, 2)
+        dist_charge = round(rule.base_distribution_fee, 2) if (rule and rule.base_distribution_fee) else 0.0
+        if dist_charge > total_bill:
+            dist_charge = 0.0
+        var_charge = round(total_bill - dist_charge, 2)
+
+        billing_breakdown = {
+            "total_bill_php": total_bill,
+            "effective_rate_per_kwh": round(active_rate, 4),
+            "variable_charge_php": var_charge,
+            "distribution_charge_php": dist_charge,
+            "pre_discount_subtotal_php": total_bill,
+            "lifeline_discount_percentage": 0,
+            "lifeline_discount_php": 0.0,
+            "energy_tax_php": 0.0
+        }
     else:
+        # Standard unbundled ERC benchmark calculation
         latest_rate_entry = (
             db.query(ProviderRate)
             .filter(ProviderRate.provider_code == provider_code)
@@ -320,11 +340,11 @@ def get_live_billing(
         active_rate = latest_rate_entry.benchmark_rate if latest_rate_entry else 14.50
         rate_status = latest_rate_entry.status if latest_rate_entry else "FALLBACK"
 
-    billing_breakdown = calculate_ph_electricity_bill(
-        accumulated_kwh=accumulated_kwh,
-        benchmark_rate=active_rate,
-        provider_rule=rule
-    )
+        billing_breakdown = calculate_ph_electricity_bill(
+            accumulated_kwh=accumulated_kwh,
+            benchmark_rate=active_rate,
+            provider_rule=rule
+        )
 
     return {
         "accumulated_kwh": round(accumulated_kwh, 2),
