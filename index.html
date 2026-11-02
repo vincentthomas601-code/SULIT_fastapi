@@ -277,38 +277,46 @@
     }
 
     async function fetchActiveAppliances() {
-      try {
-        const res = await fetch('/api/v1/appliances/active', {
-          headers: { 'X-Device-ID': getDeviceId() }
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        const container = document.getElementById('active-appliances-list');
-        const countBadge = document.getElementById('active-count-badge');
-        
-        countBadge.innerText = `${data.length} Active`;
+  try {
+    const res = await fetch('/api/v1/appliances/active', {
+      headers: { 'X-Device-ID': getDeviceId() }
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const container = document.getElementById('active-appliances-list');
+    const countBadge = document.getElementById('active-count-badge');
+    
+    countBadge.innerText = `${data.length} Active`;
 
-        if (data.length === 0) {
-          container.innerHTML = '<p class="text-xs text-slate-400 italic">No active appliances detected yet.</p>';
-          return;
-        }
-
-        container.innerHTML = data.map(app => `
-          <div class="flex justify-between items-center bg-slate-900/60 border border-slate-700/50 p-3 rounded-lg">
-            <div>
-              <p class="text-sm font-semibold text-slate-200">${app.appliance_name}</p>
-              <p class="text-[10px] text-slate-400">Started: ${new Date(app.started_at).toLocaleTimeString()}</p>
-            </div>
-            <div class="text-right">
-              <span class="text-sm font-bold text-amber-400">+${Number(app.power_draw_w).toFixed(1)} W</span>
-            </div>
-          </div>
-        `).join('');
-      } catch (err) {
-        console.error('Error fetching active appliances:', err);
-      }
+    if (data.length === 0) {
+      container.innerHTML = '<p class="text-xs text-slate-400 italic">No active appliances detected yet.</p>';
+      return;
     }
 
+    // Extract active rate from current billing data (defaults to ₱14.50/kWh if loading)
+    const effectiveRate = currentBillingData ? (currentBillingData.effective_rate_per_kwh || 14.50) : 14.50;
+
+    container.innerHTML = data.map(app => {
+      const kW = app.power_draw_w / 1000.0;
+      const hourlyCost = kW * effectiveRate;
+
+      return `
+        <div class="flex justify-between items-center bg-slate-900/60 border border-slate-700/50 p-3 rounded-lg">
+          <div>
+            <p class="text-sm font-semibold text-slate-200">${app.appliance_name}</p>
+            <p class="text-[10px] text-slate-400">Started: ${new Date(app.started_at).toLocaleTimeString()}</p>
+          </div>
+          <div class="text-right">
+            <span class="text-sm font-bold text-amber-400">+${Number(app.power_draw_w).toFixed(1)} W</span>
+            <span class="text-xs font-semibold text-emerald-400 block mt-0.5">₱ ${hourlyCost.toFixed(2)} / hr</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Error fetching active appliances:', err);
+  }
+}
     async function fetchRecentEvents() {
       try {
         const res = await fetch('/api/v1/events/recent', {
