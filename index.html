@@ -3,104 +3,221 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart NILM & Billing Dashboard</title>
+  <title>SULIT PRO - Smart Home Energy Monitor</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- ApexCharts CDN for Load Disaggregation & Profile Line Charts -->
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen">
-  <div class="max-w-6xl mx-auto px-4 py-8">
-    <!-- Header -->
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
+  <div class="max-w-7xl mx-auto px-4 py-6">
+    
+    <!-- Top Nav Header -->
     <header class="flex justify-between items-center pb-6 border-b border-slate-800">
       <div>
-        <h1 class="text-2xl font-bold text-sky-400">⚡ SULIT Smart Billing Dashboard</h1>
-        <p class="text-xs text-slate-400 mt-1">Philippine 220V / 60Hz Grid Power & Tariff Monitor</p>
+        <div class="flex items-center space-x-2">
+          <span class="text-2xl font-black tracking-tight text-sky-400">⚡ SULIT</span>
+          <span class="bg-sky-500/20 text-sky-400 text-[10px] font-bold px-2 py-0.5 rounded border border-sky-500/30">PRO</span>
+        </div>
+        <p class="text-xs text-slate-400 mt-0.5">Philippine 220V / 60Hz Grid Power & Tariff Monitor</p>
       </div>
-      <div id="rate-badge" class="px-3 py-1 text-xs rounded-full font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-        Connecting...
+
+      <div class="flex items-center space-x-4">
+        <!-- Rate Status Badge -->
+        <div id="rate-badge" class="px-3 py-1 text-xs rounded-full font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          Connecting...
+        </div>
+        <!-- Refresh Button -->
+        <button onclick="refreshAllDashboardData()" class="p-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-slate-800 transition" title="Refresh Dashboard">
+          🔄
+        </button>
       </div>
     </header>
 
-    <!-- Summary Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 my-8">
-      <div class="bg-slate-800 border border-slate-700/60 rounded-xl p-5 shadow-lg">
-        <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Live kWh Consumed</span>
-        <div class="text-3xl font-bold text-white mt-2" id="card-kwh">0.00 <span class="text-sm font-normal text-slate-400">kWh</span></div>
-        <p class="text-xs text-slate-500 mt-2">PZEM-004T Accumulation</p>
+    <!-- Top Summary Metrics Grid (4-Column Layout) -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 my-6">
+      
+      <!-- Card 1: Live Power Demand -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg relative overflow-hidden">
+        <div class="flex justify-between items-start">
+          <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Live Power Demand</span>
+          <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+        </div>
+        <div class="text-3xl font-extrabold text-white mt-2" id="card-live-demand">0.00 <span class="text-sm font-normal text-slate-400">kW</span></div>
+        <div class="flex justify-between items-center text-xs text-slate-400 mt-3 pt-2 border-t border-slate-800/80">
+          <span>Status: <strong class="text-emerald-400 font-medium" id="card-demand-status">Optimal</strong></span>
+          <span id="card-active-loads-count">0 Active Loads</span>
+        </div>
       </div>
 
-      <div class="bg-slate-800 border border-slate-700/60 rounded-xl p-5 shadow-lg">
-        <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Estimated Bill</span>
-        <div class="text-3xl font-bold text-sky-400 mt-2" id="card-bill">₱ 0.00</div>
-        <p class="text-xs text-slate-500 mt-2">Unbundled ERC Tariff Calculated</p>
+      <!-- Card 2: Live kWh Consumed -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+        <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Accumulated Usage</span>
+        <div class="text-3xl font-extrabold text-white mt-2" id="card-kwh">0.00 <span class="text-sm font-normal text-slate-400">kWh</span></div>
+        <div class="flex justify-between items-center text-xs text-slate-400 mt-3 pt-2 border-t border-slate-800/80">
+          <span>PZEM-004T Metering</span>
+          <span class="text-sky-400 font-medium">Real-Time</span>
+        </div>
       </div>
 
-      <div class="bg-slate-800 border border-slate-700/60 rounded-xl p-5 shadow-lg">
-        <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Active Effective Rate</span>
-        <div class="text-3xl font-bold text-indigo-400 mt-2" id="card-rate">₱ 0.00 <span class="text-sm font-normal text-slate-400">/ kWh</span></div>
-        <p class="text-xs text-slate-500 mt-2" id="card-provider-info">Provider: --</p>
+      <!-- Card 3: Estimated Bill & Effective Rate -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+        <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Estimated Bill</span>
+        <div class="text-3xl font-extrabold text-sky-400 mt-2" id="card-bill">₱ 0.00</div>
+        <div class="flex justify-between items-center text-xs text-slate-400 mt-3 pt-2 border-t border-slate-800/80">
+          <span id="card-rate">Rate: ₱0.00/kWh</span>
+          <span id="card-provider-info" class="truncate max-w-[110px]">Provider: --</span>
+        </div>
       </div>
+
+      <!-- Card 4: Carbon Impact (Philippine Grid Math) -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+        <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Carbon Impact</span>
+        <div class="text-3xl font-extrabold text-teal-400 mt-2" id="card-carbon-co2">0.0 <span class="text-sm font-normal text-slate-400">kg CO₂</span></div>
+        <div class="text-xs text-slate-400 mt-3 pt-2 border-t border-slate-800/80">
+          Equivalent to <strong class="text-teal-300 font-medium" id="card-trees-equivalent">0 Trees</strong> planted
+        </div>
+      </div>
+
     </div>
 
-    <!-- NILM Live Disaggregation & Event History Section -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-      <!-- Active Running Appliances -->
-      <div class="bg-slate-800 border border-slate-700/60 rounded-xl p-6 shadow-lg">
+    <!-- Middle Section: Load Disaggregation Donut + Active Appliances Table -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+      
+      <!-- Load Disaggregation Donut Chart -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg flex flex-col justify-between">
         <div class="flex justify-between items-center mb-4">
-          <h2 class="text-lg font-semibold text-white">🟢 Currently Running Appliances</h2>
+          <div>
+            <h2 class="text-base font-bold text-white">Load Disaggregation</h2>
+            <p class="text-xs text-slate-400">AI Non-Intrusive Load Monitoring (NILM)</p>
+          </div>
+          <span class="px-2.5 py-0.5 text-[10px] rounded font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20">Real-Time</span>
+        </div>
+        <div id="disaggregation-donut-chart" class="py-2"></div>
+        <div class="flex justify-between items-center text-xs text-slate-500 pt-3 border-t border-slate-800">
+          <span>Model: <strong>1D ResNet (ONNX)</strong></span>
+          <span>Sample Rate: 30 kHz</span>
+        </div>
+      </div>
+
+      <!-- Active Running Appliances & Hourly Cost Attribution -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg flex flex-col justify-between">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-base font-bold text-white">🟢 Currently Running Appliances</h2>
           <span id="active-count-badge" class="px-2.5 py-0.5 text-xs rounded-full font-medium bg-sky-500/10 text-sky-400 border border-sky-500/20">0 Active</span>
         </div>
-        <div id="active-appliances-list" class="space-y-3">
+        <div id="active-appliances-list" class="space-y-3 my-auto min-h-[180px]">
           <p class="text-xs text-slate-400 italic">No active appliances detected yet.</p>
         </div>
-      </div>
-
-      <!-- Recent Transient Detection Audit Log -->
-      <div class="bg-slate-800 border border-slate-700/60 rounded-xl p-6 shadow-lg">
-        <h2 class="text-lg font-semibold text-white mb-4">⚡ Recent Transient Detection Log</h2>
-        <div class="overflow-x-auto max-h-64">
-          <table class="w-full text-xs text-left text-slate-300">
-            <thead class="text-slate-400 uppercase bg-slate-900/50 sticky top-0">
-              <tr>
-                <th class="px-3 py-2">Time</th>
-                <th class="px-3 py-2">Appliance</th>
-                <th class="px-3 py-2">Event</th>
-                <th class="px-3 py-2">Δ Power</th>
-                <th class="px-3 py-2">Confidence</th>
-              </tr>
-            </thead>
-            <tbody id="event-log-tbody">
-              <tr>
-                <td colspan="5" class="px-3 py-4 text-center text-slate-500 italic">No switching events logged.</td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="pt-4 border-t border-slate-800 text-xs text-slate-500 flex justify-between">
+          <span>Real-time power step matched ($\Delta P$)</span>
+          <span>Live ₱/hr cost attribution</span>
         </div>
       </div>
+
     </div>
 
-    <!-- Main Grid: Breakdown & Settings -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+    <!-- Lower Section: 24-Hour Load Curve Profile & Interactive Toggle Simulator -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+      
+      <!-- 24-Hour Consumption Profile Curve (2 Columns Wide) -->
+      <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg">
+        <div class="flex justify-between items-center mb-4">
+          <div>
+            <h2 class="text-base font-bold text-white">Consumption Profile</h2>
+            <p class="text-xs text-slate-400">Daily load curve with peak usage highlight</p>
+          </div>
+          <div class="flex space-x-2">
+            <button class="px-3 py-1 text-xs rounded bg-sky-600 text-white font-medium">24 Hours</button>
+            <button class="px-3 py-1 text-xs rounded bg-slate-950 text-slate-400 hover:text-slate-200 transition">7 Days</button>
+          </div>
+        </div>
+        <div id="load-profile-line-chart"></div>
+      </div>
+
+      <!-- Interactive UI Hardware Simulator Toggles (1 Column) -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="text-base font-bold text-white">Interactive Simulator</h2>
+          <span class="px-2 py-0.5 text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded font-mono">LIVE LOAD TOGGLE</span>
+        </div>
+        <p class="text-xs text-slate-400 mb-4">Toggle devices ON/OFF to simulate real-time transient signals in backend.</p>
+
+        <div class="space-y-3">
+          <!-- Air Conditioner Toggle -->
+          <div class="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-lg">
+            <div>
+              <p class="text-xs font-bold text-slate-200">Air Conditioner (1.5 HP)</p>
+              <p class="text-[10px] text-slate-500 font-mono">800 Watts</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" onchange="toggleSimulatedLoad('Air Conditioner', 800, this.checked)" class="sr-only peer">
+              <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
+            </label>
+          </div>
+
+          <!-- Water Heater Toggle -->
+          <div class="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-lg">
+            <div>
+              <p class="text-xs font-bold text-slate-200">Water Heater</p>
+              <p class="text-[10px] text-slate-500 font-mono">1500 Watts</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" onchange="toggleSimulatedLoad('Water Heater', 1500, this.checked)" class="sr-only peer">
+              <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
+            </label>
+          </div>
+
+          <!-- Electric Fan Toggle -->
+          <div class="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-lg">
+            <div>
+              <p class="text-xs font-bold text-slate-200">Electric Fan</p>
+              <p class="text-[10px] text-slate-500 font-mono">110 Watts</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" onchange="toggleSimulatedLoad('Electric Fan', 110, this.checked)" class="sr-only peer">
+              <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Telemetry Feed Inputs -->
+        <div class="mt-4 pt-3 border-t border-slate-800">
+          <label class="block text-[10px] text-slate-400 uppercase tracking-wider mb-2">⚡ Mock ESP32 Telemetry Feed</label>
+          <div class="flex space-x-2">
+            <input type="number" id="mock-kwh-input" value="310" step="0.1" class="w-1/2 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-sky-500">
+            <button onclick="sendMockTelemetry()" class="w-1/2 bg-amber-600 hover:bg-amber-500 text-white py-1.5 rounded-lg text-xs font-semibold transition">Push kWh</button>
+          </div>
+          <div id="telemetry-status" class="text-[10px] mt-1.5 text-slate-400">Push test value to simulate ESP32 transmission.</div>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- Main Grid: Breakdown & Tariff Control -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
       
       <!-- Component Breakdown -->
-      <div class="bg-slate-800 border border-slate-700/60 rounded-xl p-6 shadow-lg">
-        <h2 class="text-lg font-semibold text-white mb-4">Unbundled Bill Breakdown</h2>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg">
+        <h2 class="text-base font-bold text-white mb-4">Unbundled Bill Breakdown</h2>
         <div class="space-y-3 text-sm">
-          <div class="flex justify-between py-2 border-b border-slate-700/50">
+          <div class="flex justify-between py-2 border-b border-slate-800">
             <span class="text-slate-400">Generation & Pass-Through (Variable)</span>
             <span class="font-medium text-slate-200" id="bk-variable">₱ 0.00</span>
           </div>
-          <div class="flex justify-between py-2 border-b border-slate-700/50">
+          <div class="flex justify-between py-2 border-b border-slate-800">
             <span class="text-slate-400">Distribution Fee (Re-Rated)</span>
             <span class="font-medium text-slate-200" id="bk-distribution">₱ 0.00</span>
           </div>
-          <div class="flex justify-between py-2 border-b border-slate-700/50">
+          <div class="flex justify-between py-2 border-b border-slate-800">
             <span class="text-slate-400">Pre-Discount Subtotal</span>
             <span class="font-medium text-slate-200" id="bk-subtotal">₱ 0.00</span>
           </div>
-          <div class="flex justify-between py-2 border-b border-slate-700/50">
+          <div class="flex justify-between py-2 border-b border-slate-800">
             <span class="text-slate-400">Lifeline Discount (<span id="bk-lifeline-pct">0</span>%)</span>
             <span class="font-medium text-emerald-400" id="bk-lifeline">- ₱ 0.00</span>
           </div>
-          <div class="flex justify-between py-2 border-b border-slate-700/50">
+          <div class="flex justify-between py-2 border-b border-slate-800">
             <span class="text-slate-400">Marginal Energy Tax (BP 36)</span>
             <span class="font-medium text-amber-400" id="bk-tax">+ ₱ 0.00</span>
           </div>
@@ -111,26 +228,26 @@
         </div>
       </div>
 
-      <!-- Settings Panel -->
-      <div class="bg-slate-800 border border-slate-700/60 rounded-xl p-6 shadow-lg space-y-6">
-        <h2 class="text-lg font-semibold text-white">Tariff & Hardware Simulator</h2>
-
+      <!-- Settings & Rate Source Controller -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg space-y-4">
+        <h2 class="text-base font-bold text-white">Tariff & Rate Mode Controller</h2>
+        
         <!-- Provider Select -->
         <div>
-          <label class="block text-xs text-slate-400 uppercase tracking-wider mb-2">Distribution Utility Provider</label>
-          <select id="provider-select" onchange="updateProviderSettings()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-sky-500">
+          <label class="block text-[10px] text-slate-400 uppercase tracking-wider mb-1">Distribution Utility Provider</label>
+          <select id="provider-select" onchange="updateProviderSettings()" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-sky-500">
           </select>
         </div>
 
         <!-- Mode Select -->
         <div>
-          <label class="block text-xs text-slate-400 uppercase tracking-wider mb-2">Rate Source Mode</label>
-          <div class="flex space-x-4">
-            <label class="flex items-center text-sm cursor-pointer">
+          <label class="block text-[10px] text-slate-400 uppercase tracking-wider mb-1">Rate Source Mode</label>
+          <div class="flex space-x-4 text-xs">
+            <label class="flex items-center cursor-pointer">
               <input type="radio" name="rate_mode" value="auto" checked onchange="toggleRateMode(false)" class="text-sky-500 focus:ring-0">
               <span class="ml-2 text-slate-300">Scraped Benchmark</span>
             </label>
-            <label class="flex items-center text-sm cursor-pointer">
+            <label class="flex items-center cursor-pointer">
               <input type="radio" name="rate_mode" value="custom" onchange="toggleRateMode(true)" class="text-sky-500 focus:ring-0">
               <span class="ml-2 text-slate-300">Manual / e-Bill Override</span>
             </label>
@@ -138,48 +255,62 @@
         </div>
 
         <!-- Manual Rate Container -->
-        <div id="custom-rate-container" class="hidden space-y-3 pt-2">
-          <label class="block text-xs text-slate-400 uppercase tracking-wider">Custom Rate Override (₱/kWh)</label>
+        <div id="custom-rate-container" class="hidden space-y-2 pt-1">
+          <label class="block text-[10px] text-slate-400 uppercase tracking-wider">Custom Rate Override (₱/kWh)</label>
           <div class="flex space-x-2">
-            <input type="number" step="0.0001" id="custom-rate-input" placeholder="12.50" class="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-sky-500">
-            <button onclick="saveCustomRate()" class="bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition">Save</button>
+            <input type="number" step="0.0001" id="custom-rate-input" placeholder="10.00" class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-sky-500">
+            <button onclick="saveCustomRate()" class="bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition">Save Rate</button>
           </div>
         </div>
 
         <!-- PDF Upload -->
-        <div class="pt-2 border-t border-slate-700/50">
-          <label class="block text-xs text-slate-400 uppercase tracking-wider mb-2">Upload e-Bill PDF</label>
-          <input type="file" id="pdf-upload" accept="application/pdf" class="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-700 file:text-slate-200 hover:file:bg-slate-600 cursor-pointer">
-          <button onclick="uploadPdf()" class="mt-3 w-full bg-slate-700 hover:bg-slate-600 text-slate-200 py-2 rounded-lg text-xs font-semibold transition">Process PDF & Set Rate</button>
-          <div id="upload-status" class="text-xs mt-2 text-slate-400"></div>
-        </div>
-
-        <!-- Hardware Simulator Control -->
-        <div class="pt-4 border-t border-slate-700/50">
-          <label class="block text-xs text-slate-400 uppercase tracking-wider mb-2">⚡ Mock ESP32 Telemetry Feed</label>
-          <div class="flex space-x-2">
-            <input type="number" id="mock-kwh-input" value="310" step="0.1" class="w-1/2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-sky-500" placeholder="e.g. 310">
-            <button onclick="sendMockTelemetry()" class="w-1/2 bg-amber-600 hover:bg-amber-500 text-white py-2 rounded-lg text-xs font-semibold transition">Push Mock Telemetry</button>
-          </div>
-          <div id="telemetry-status" class="text-xs mt-2 text-slate-400">Push a test value to simulate ESP32 transmission.</div>
+        <div class="pt-3 border-t border-slate-800">
+          <label class="block text-[10px] text-slate-400 uppercase tracking-wider mb-2">Upload e-Bill PDF</label>
+          <input type="file" id="pdf-upload" accept="application/pdf" class="block w-full text-xs text-slate-400 file:mr-4 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 cursor-pointer">
+          <button onclick="uploadPdf()" class="mt-2.5 w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-1.5 rounded-lg text-xs font-semibold transition border border-slate-700">Process PDF & Set Rate</button>
+          <div id="upload-status" class="text-[10px] mt-1.5 text-slate-400"></div>
         </div>
 
       </div>
 
     </div>
 
-    <!-- AI Energy Insights Card -->
-    <div style="margin-top: 24px; background-color: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <h3 style="margin: 0; color: #f8fafc; font-size: 1.1rem;">🤖 Gemini AI Energy Insights</h3>
-            <button id="aiBtn" onclick="fetchAIInsights()" style="background-color: #2563eb; color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600;">
-                Generate AI Report
-            </button>
-        </div>
-        <div id="aiOutput" style="background-color: #0f172a; padding: 16px; border-radius: 8px; font-family: monospace; font-size: 0.9rem; line-height: 1.6; color: #cbd5e1; white-space: pre-wrap; min-height: 100px;">
-            Click "Generate AI Report" to get personalized efficiency advice based on your current live consumption.
-        </div>
+    <!-- Recent Transient Detection Audit Log -->
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg mb-6">
+      <h2 class="text-base font-bold text-white mb-4">⚡ Recent Transient Detection Log</h2>
+      <div class="overflow-x-auto max-h-56">
+        <table class="w-full text-xs text-left text-slate-300">
+          <thead class="text-slate-400 uppercase bg-slate-950 sticky top-0">
+            <tr>
+              <th class="px-3 py-2">Time</th>
+              <th class="px-3 py-2">Appliance</th>
+              <th class="px-3 py-2">Event</th>
+              <th class="px-3 py-2">Δ Power</th>
+              <th class="px-3 py-2">Confidence</th>
+            </tr>
+          </thead>
+          <tbody id="event-log-tbody">
+            <tr>
+              <td colspan="5" class="px-3 py-4 text-center text-slate-500 italic">No switching events logged.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
+
+    <!-- AI Insights Section -->
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-base font-bold text-white">🤖 Gemini AI Energy Insights</h3>
+        <button id="aiBtn" onclick="fetchAIInsights()" class="bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 rounded-lg text-xs font-semibold transition">
+          Generate AI Report
+        </button>
+      </div>
+      <div id="aiOutput" class="bg-slate-950 p-4 rounded-lg font-mono text-xs leading-relaxed text-slate-300 min-h-[90px] whitespace-pre-wrap">
+        Click "Generate AI Report" to get personalized efficiency advice based on your current live consumption.
+      </div>
+    </div>
+
   </div>
 
   <script>
@@ -193,7 +324,45 @@
     }
 
     let currentBillingData = null;
+    let donutChart = null;
+    let lineChart = null;
 
+    // Initialize ApexCharts
+    function initCharts() {
+      // Donut Chart for Disaggregation
+      const donutOptions = {
+        series: [45, 25, 15, 15],
+        labels: ['Air Conditioner', 'Water Heater', 'Electric Fan', 'Other Loads'],
+        chart: { type: 'donut', height: 250, background: 'transparent' },
+        colors: ['#0ea5e9', '#f59e0b', '#10b981', '#64748b'],
+        theme: { mode: 'dark' },
+        stroke: { show: false },
+        legend: { position: 'right', labels: { colors: '#94a3b8' } },
+        dataLabels: { enabled: false }
+      };
+      donutChart = new ApexCharts(document.querySelector("#disaggregation-donut-chart"), donutOptions);
+      donutChart.render();
+
+      // Line Chart for 24-Hour Load Curve
+      const lineOptions = {
+        series: [{ name: 'Power (kW)', data: [0.4, 0.35, 0.3, 0.45, 1.2, 1.4, 1.8, 2.6, 2.5, 2.1, 1.6, 0.9] }],
+        chart: { type: 'area', height: 230, toolbar: { show: false }, background: 'transparent' },
+        colors: ['#10b981'],
+        theme: { mode: 'dark' },
+        stroke: { curve: 'smooth', width: 3 },
+        fill: { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.45, opacityTo: 0.05 } },
+        xaxis: {
+          categories: ['12AM', '2AM', '4AM', '6AM', '8AM', '10AM', '12PM', '2PM', '4PM', '6PM', '8PM', '10PM'],
+          labels: { style: { colors: '#64748b', fontSize: '10px' } }
+        },
+        yaxis: { labels: { style: { colors: '#64748b' } } },
+        grid: { borderColor: '#1e293b' }
+      };
+      lineChart = new ApexCharts(document.querySelector("#load-profile-line-chart"), lineOptions);
+      lineChart.render();
+    }
+
+    // Connect Server-Sent Events (SSE)
     function initSSE() {
       const evtSource = new EventSource('/api/v1/events/stream');
 
@@ -216,6 +385,31 @@
       evtSource.onerror = function(err) {
         console.warn('[SSE] EventSource connection issue. Auto-reconnecting...', err);
       };
+    }
+
+    // Interactive Load Switch Simulator (Posts transient samples directly to API)
+    async function toggleSimulatedLoad(applianceName, watts, isTurningOn) {
+      const pBefore = 100.0;
+      const pAfter = isTurningOn ? (pBefore + watts) : (pBefore - watts);
+      const mockSamples = new Array(6000).fill(0).map(() => (Math.random() - 0.5) * 0.1);
+
+      try {
+        await fetch('/api/v1/events/transient', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            device_id: getDeviceId(),
+            p_before: pBefore,
+            p_after: pAfter,
+            pf_before: 0.92,
+            pf_after: 0.98,
+            raw_samples: mockSamples
+          })
+        });
+        refreshAllDashboardData();
+      } catch (err) {
+        console.error('Error toggling load:', err);
+      }
     }
 
     async function fetchProviders() {
@@ -252,8 +446,8 @@
 
         document.getElementById('card-kwh').innerHTML = `${kwh} <span class="text-sm font-normal text-slate-400">kWh</span>`;
         document.getElementById('card-bill').innerText = `₱ ${Number(totalBill).toFixed(2)}`;
-        document.getElementById('card-rate').innerHTML = `₱ ${Number(rate).toFixed(4)} <span class="text-sm font-normal text-slate-400">/ kWh</span>`;
-        document.getElementById('card-provider-info').innerText = `Provider: ${providerName} (${region})`;
+        document.getElementById('card-rate').innerText = `Rate: ₱${Number(rate).toFixed(4)}/kWh`;
+        document.getElementById('card-provider-info').innerText = `${providerName} (${region})`;
 
         const badge = document.getElementById('rate-badge');
         badge.innerText = `STATUS: ${data.rate_status || 'OK'}`;
@@ -266,6 +460,12 @@
         document.getElementById('bk-tax').innerText = `+ ₱ ${Number(data.energy_tax_php || 0).toFixed(2)}`;
         document.getElementById('bk-total').innerText = `₱ ${Number(totalBill).toFixed(2)}`;
 
+        // Carbon Math: 0.7122 kg CO2 per kWh (Philippine DOE Grid emission factor)
+        const carbonKg = kwh * 0.7122;
+        const treesPlanted = carbonKg / 21.77;
+        document.getElementById('card-carbon-co2').innerHTML = `${carbonKg.toFixed(1)} <span class="text-sm font-normal text-slate-400">kg CO₂</span>`;
+        document.getElementById('card-trees-equivalent').innerText = `${treesPlanted.toFixed(0)} Trees`;
+
         if (data.use_custom_rate) {
           document.querySelector('input[name="rate_mode"][value="custom"]').checked = true;
           document.getElementById('custom-rate-container').classList.remove('hidden');
@@ -277,46 +477,53 @@
     }
 
     async function fetchActiveAppliances() {
-  try {
-    const res = await fetch('/api/v1/appliances/active', {
-      headers: { 'X-Device-ID': getDeviceId() }
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    const container = document.getElementById('active-appliances-list');
-    const countBadge = document.getElementById('active-count-badge');
-    
-    countBadge.innerText = `${data.length} Active`;
+      try {
+        const res = await fetch('/api/v1/appliances/active', {
+          headers: { 'X-Device-ID': getDeviceId() }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const container = document.getElementById('active-appliances-list');
+        const countBadge = document.getElementById('active-count-badge');
+        
+        countBadge.innerText = `${data.length} Active`;
+        document.getElementById('card-active-loads-count').innerText = `${data.length} Active Loads`;
 
-    if (data.length === 0) {
-      container.innerHTML = '<p class="text-xs text-slate-400 italic">No active appliances detected yet.</p>';
-      return;
+        // Calculate total demand in kW
+        let totalWatts = 0;
+        data.forEach(app => totalWatts += app.power_draw_w);
+        const livekW = (totalWatts / 1000.0).toFixed(2);
+        document.getElementById('card-live-demand').innerHTML = `${livekW} <span class="text-sm font-normal text-slate-400">kW</span>`;
+
+        if (data.length === 0) {
+          container.innerHTML = '<p class="text-xs text-slate-400 italic">No active appliances detected yet.</p>';
+          return;
+        }
+
+        const effectiveRate = currentBillingData ? (currentBillingData.effective_rate_per_kwh || 14.50) : 14.50;
+
+        container.innerHTML = data.map(app => {
+          const kW = app.power_draw_w / 1000.0;
+          const hourlyCost = kW * effectiveRate;
+
+          return `
+            <div class="flex justify-between items-center bg-slate-950 border border-slate-800 p-3 rounded-lg">
+              <div>
+                <p class="text-xs font-bold text-slate-200">${app.appliance_name}</p>
+                <p class="text-[10px] text-slate-500">Started: ${new Date(app.started_at).toLocaleTimeString()}</p>
+              </div>
+              <div class="text-right">
+                <span class="text-xs font-bold text-amber-400">+${Number(app.power_draw_w).toFixed(1)} W</span>
+                <span class="text-[11px] font-semibold text-emerald-400 block mt-0.5">₱ ${hourlyCost.toFixed(2)} / hr</span>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error('Error fetching active appliances:', err);
+      }
     }
 
-    // Extract active rate from current billing data (defaults to ₱14.50/kWh if loading)
-    const effectiveRate = currentBillingData ? (currentBillingData.effective_rate_per_kwh || 14.50) : 14.50;
-
-    container.innerHTML = data.map(app => {
-      const kW = app.power_draw_w / 1000.0;
-      const hourlyCost = kW * effectiveRate;
-
-      return `
-        <div class="flex justify-between items-center bg-slate-900/60 border border-slate-700/50 p-3 rounded-lg">
-          <div>
-            <p class="text-sm font-semibold text-slate-200">${app.appliance_name}</p>
-            <p class="text-[10px] text-slate-400">Started: ${new Date(app.started_at).toLocaleTimeString()}</p>
-          </div>
-          <div class="text-right">
-            <span class="text-sm font-bold text-amber-400">+${Number(app.power_draw_w).toFixed(1)} W</span>
-            <span class="text-xs font-semibold text-emerald-400 block mt-0.5">₱ ${hourlyCost.toFixed(2)} / hr</span>
-          </div>
-        </div>
-      `;
-    }).join('');
-  } catch (err) {
-    console.error('Error fetching active appliances:', err);
-  }
-}
     async function fetchRecentEvents() {
       try {
         const res = await fetch('/api/v1/events/recent', {
@@ -338,9 +545,9 @@
           const confidencePct = (evt.confidence * 100).toFixed(0);
 
           return `
-            <tr class="border-b border-slate-700/40 hover:bg-slate-700/20">
+            <tr class="border-b border-slate-800 hover:bg-slate-800/40">
               <td class="px-3 py-2 text-slate-400">${new Date(evt.timestamp).toLocaleTimeString()}</td>
-              <td class="px-3 py-2 font-medium text-slate-200">${evt.appliance_name}</td>
+              <td class="px-3 py-2 font-semibold text-slate-200">${evt.appliance_name}</td>
               <td class="px-3 py-2">
                 <span class="px-2 py-0.5 text-[10px] rounded font-semibold border ${badgeClass}">
                   ${evt.event_type}
@@ -511,13 +718,15 @@
       fetchRecentEvents();
     }
 
-    // Load static providers and initial data, then initialize real-time SSE stream
-    fetchProviders().then(() => {
-      refreshAllDashboardData();
-      initSSE();
+    document.addEventListener('DOMContentLoaded', () => {
+      initCharts();
+      fetchProviders().then(() => {
+        refreshAllDashboardData();
+        initSSE();
+      });
     });
 
-    // Fallback periodic refresh every 30 seconds (reduced from 3s to save Render resources)
+    // Fallback periodic refresh every 30 seconds
     setInterval(refreshAllDashboardData, 30000);
   </script>
 </body>
