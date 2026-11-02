@@ -1,10 +1,12 @@
+import asyncio
 import io
+import json
 import re
 from typing import Optional
 import pdfplumber
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -37,6 +39,33 @@ app.add_middleware(
 )
 
 
+# ------------------------------------------------------------------
+# Real-Time SSE Broadcaster
+# ------------------------------------------------------------------
+class EventBroadcaster:
+    def __init__(self):
+        self.subscribers: list[asyncio.Queue] = []
+
+    async def subscribe(self) -> asyncio.Queue:
+        queue = asyncio.Queue()
+        self.subscribers.append(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue):
+        if queue in self.subscribers:
+            self.subscribers.remove(queue)
+
+    async def broadcast(self, data: dict):
+        for queue in list(self.subscribers):
+            await queue.put(data)
+
+
+broadcaster = EventBroadcaster()
+
+
+# ------------------------------------------------------------------
+# Pydantic Schemas
+# ------------------------------------------------------------------
 class TelemetryInput(BaseModel):
     device_id: str = Field(..., example="ESP32_01")
     kwh: float = Field(..., example=310.0)
@@ -109,16 +138,51 @@ def serve_dashboard():
     return FileResponse("index.html")
 
 
+@app.get("/api/v1/events/stream")
+async def stream_events(request: Request):
+    """Server-Sent Events (SSE) stream for real-time dashboard updates."""
+    async def event_generator():
+        queue = await broadcaster.subscribe()
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                data = await queue.get()
+                yield f"data: {json.dumps(data)}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            broadcaster.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
 @app.post("/api/v1/telemetry")
-def ingest_telemetry(data: TelemetryInput, db: Session = Depends(get_db)):
+async def ingest_telemetry(data: TelemetryInput, db: Session = Depends(get_db)):
     log_entry = TelemetryLog(device_id=data.device_id, accumulated_kwh=data.kwh)
     db.add(log_entry)
     db.commit()
+
+    # Broadcast telemetry update to dashboard
+    await broadcaster.broadcast({
+        "type": "TELEMETRY_UPDATED",
+        "device_id": data.device_id,
+        "kwh": data.kwh
+    })
+
     return {"status": "SUCCESS", "message": "Telemetry log stored successfully."}
 
 
 @app.post("/api/v1/events/transient")
-def process_transient_event(data: TransientEventInput, db: Session = Depends(get_db)):
+async def process_transient_event(data: TransientEventInput, db: Session = Depends(get_db)):
     delta_p = data.p_after - data.p_before
 
     # 1. Extract 22-dimensional feature vector via DSP module
@@ -150,6 +214,16 @@ def process_transient_event(data: TransientEventInput, db: Session = Depends(get
         db.add(event_log)
         db.add(session_entry)
         db.commit()
+
+        # Push SSE real-time notification to open browser clients
+        await broadcaster.broadcast({
+            "type": "TRANSIENT_DETECTED",
+            "device_id": data.device_id,
+            "event_type": "TURN_ON",
+            "appliance_name": appliance_name,
+            "delta_power_w": round(delta_p, 2),
+            "confidence": confidence
+        })
 
         return {
             "status": "SUCCESS",
@@ -183,6 +257,16 @@ def process_transient_event(data: TransientEventInput, db: Session = Depends(get
         )
         db.add(event_log)
         db.commit()
+
+        # Push SSE real-time notification to open browser clients
+        await broadcaster.broadcast({
+            "type": "TRANSIENT_DETECTED",
+            "device_id": data.device_id,
+            "event_type": "TURN_OFF",
+            "appliance_name": closest_session.appliance_name,
+            "delta_power_w": round(delta_p, 2),
+            "confidence": 1.0
+        })
 
         return {
             "status": "SUCCESS",
@@ -242,7 +326,6 @@ def get_live_billing(
         provider_rule=rule
     )
 
-    # Construct complete payload expected by index.html
     return {
         "accumulated_kwh": round(accumulated_kwh, 2),
         "total_bill_php": billing_breakdown.get("total_bill_php", 0.0),
@@ -330,7 +413,6 @@ async def upload_ebill(
 
         effective_rate = round(total_amount / total_kwh, 4)
 
-        # Apply settings update exclusively to the uploader's device_id
         settings = get_or_create_device_settings(x_device_id, db)
         settings.use_custom_rate = True
         settings.custom_rate = effective_rate

@@ -194,6 +194,30 @@
 
     let currentBillingData = null;
 
+    function initSSE() {
+      const evtSource = new EventSource('/api/v1/events/stream');
+
+      evtSource.onopen = function() {
+        console.log('[SSE] Connected to real-time event stream.');
+      };
+
+      evtSource.onmessage = function(event) {
+        try {
+          const payload = JSON.parse(event.data);
+          console.log('[SSE] Broadcast received:', payload);
+          if (payload.type === 'TRANSIENT_DETECTED' || payload.type === 'TELEMETRY_UPDATED') {
+            refreshAllDashboardData();
+          }
+        } catch (e) {
+          console.error('[SSE] JSON parse error:', e);
+        }
+      };
+
+      evtSource.onerror = function(err) {
+        console.warn('[SSE] EventSource connection issue. Auto-reconnecting...', err);
+      };
+    }
+
     async function fetchProviders() {
       try {
         const res = await fetch('/api/v1/providers');
@@ -479,8 +503,14 @@
       fetchRecentEvents();
     }
 
-    fetchProviders().then(() => refreshAllDashboardData());
-    setInterval(refreshAllDashboardData, 3000);
+    // Load static providers and initial data, then initialize real-time SSE stream
+    fetchProviders().then(() => {
+      refreshAllDashboardData();
+      initSSE();
+    });
+
+    // Fallback periodic refresh every 30 seconds (reduced from 3s to save Render resources)
+    setInterval(refreshAllDashboardData, 30000);
   </script>
 </body>
 </html>
