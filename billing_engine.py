@@ -1,7 +1,8 @@
 import os
+from typing import Any, Dict
 from google import genai
 from google.genai import types
-from typing import Dict, Any
+
 
 def calculate_ph_electricity_bill(
     accumulated_kwh: float,
@@ -99,6 +100,8 @@ def calculate_ph_electricity_bill(
         "total_bill_php": round(total_bill_php, 2),
         "effective_rate_per_kwh": round(effective_rate_per_kwh, 4)
     }
+
+
 def get_energy_insights(nilm_summary_text: str) -> str:
     client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
     
@@ -109,7 +112,7 @@ def get_energy_insights(nilm_summary_text: str) -> str:
     )
 
     response = client.models.generate_content(
-        model="gemini-3.8-flash",
+        model="gemini-flash-latest",
         contents=nilm_summary_text,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
