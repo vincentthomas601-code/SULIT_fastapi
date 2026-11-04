@@ -109,11 +109,11 @@ def get_energy_insights(nilm_summary_text: str) -> str:
     )
 
     response = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=nilm_summary_text,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            temperature=0.3,
-        ),
-    )
+    model="gemini-2.5-flash",  # Or "gemini-1.5-flash"
+    contents=nilm_summary_text,
+    config=types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        temperature=0.3,
+    ),
+)
     return response.text
