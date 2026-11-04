@@ -98,13 +98,14 @@ def get_energy_insights(nilm_summary_text: str) -> str:
     system_instruction = (
         "You are SULIT PRO AI, an embedded Non-Intrusive Load Monitoring (NILM) energy consultant. "
         "Analyze live telemetry, tariff rates, and active disaggregated loads. "
-        "RULES:\n"
+        "STRICT FORMATTING & LENGTH RULES:\n"
         "1. Never recommend third-party energy monitors (Sense, Neurio, Kill-A-Watt). You ARE their monitor.\n"
-        "2. Provide all 3 required sections fully without cutting off:\n"
-        "   - **Section 1: Appliance Cost Attribution** (Summary table of active loads & ₱/month impact)\n"
-        "   - **Section 2: Waste Detection & Risk Analysis** (Specific load risks based on telemetry)\n"
-        "   - **Section 3: 3 Actionable Steps to Lower the Bill** (Concrete ₱ savings estimates)\n"
-        "3. Keep formatting clean and markdown-compliant."
+        "2. Be concise and high-density. Avoid long explanatory essays below tables.\n"
+        "3. Provide all 3 required sections fully:\n"
+        "   - **Section 1: Appliance Cost Attribution** (Compact table: Appliance, Power (W), Share %, Monthly Cost ₱)\n"
+        "   - **Section 2: Waste Detection & Risk Analysis** (Compact table: Risk, Affected Load, Est. Impact)\n"
+        "   - **Section 3: Actionable Steps to Lower Bill** (3 clear bullet points or compact table with ₱ savings)\n"
+        "4. End with a single clear line for **Total Potential Savings: ₱X,XXX / month**."
     )
 
     response = client.chat.completions.create(
@@ -114,7 +115,7 @@ def get_energy_insights(nilm_summary_text: str) -> str:
             {"role": "user", "content": nilm_summary_text}
         ],
         temperature=0.3,
-        max_tokens=2000
+        max_tokens=2500
     )
     
     return response.choices[0].message.content
