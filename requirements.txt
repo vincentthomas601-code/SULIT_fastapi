@@ -12,3 +12,4 @@ numpy
 scipy
 onnxruntime
 groq==0.11.0
+httpx==0.27.2
