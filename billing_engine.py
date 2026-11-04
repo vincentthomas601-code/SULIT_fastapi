@@ -102,9 +102,8 @@ def get_energy_insights(nilm_summary_text: str) -> str:
         "consumption data and utility tariff rates to give clear, actionable energy savings advice."
     )
 
-    # Call Llama 3 via Groq
     response = client.chat.completions.create(
-        model="llama3-8b-8192", 
+        model="llama-3.1-8b-instant", 
         messages=[
             {"role": "system", "content": system_instruction},
             {"role": "user", "content": nilm_summary_text}
