@@ -11,3 +11,4 @@ apscheduler
 numpy
 scipy
 onnxruntime
+groq==0.11.0

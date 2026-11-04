@@ -1,7 +1,6 @@
 import os
 from typing import Any, Dict
-from google import genai
-from google.genai import types
+from groq import Groq
 
 
 def calculate_ph_electricity_bill(
@@ -11,15 +10,6 @@ def calculate_ph_electricity_bill(
 ) -> Dict[str, Any]:
     """
     Calculates unbundled Philippine residential electricity bill.
-    
-    1. Benchmark Deconstruction:
-       implied_variable_rate = benchmark_rate - base_distribution_fee
-    2. Whole-Consumption Re-Rating (Distribution):
-       Retroactively applies distribution rate based on total monthly kWh tier.
-    3. ERC Lifeline Discount:
-       Applies discount to subtotal if monthly consumption <= 100 kWh.
-    4. Marginal Energy Tax (BP 36):
-       Applies tax on excess consumption above set thresholds.
     """
     if accumulated_kwh <= 0:
         return {
@@ -103,7 +93,8 @@ def calculate_ph_electricity_bill(
 
 
 def get_energy_insights(nilm_summary_text: str) -> str:
-    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    # Initialize the Groq client securely
+    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
     
     system_instruction = (
         "You are SULIT Energy AI, an expert Non-Intrusive Load Monitoring (NILM) "
@@ -111,12 +102,15 @@ def get_energy_insights(nilm_summary_text: str) -> str:
         "consumption data and utility tariff rates to give clear, actionable energy savings advice."
     )
 
-    response = client.models.generate_content(
-        model="gemini-flash-latest",
-        contents=nilm_summary_text,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            temperature=0.3,
-        ),
+    # Call Llama 3 via Groq
+    response = client.chat.completions.create(
+        model="llama3-8b-8192", 
+        messages=[
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": nilm_summary_text}
+        ],
+        temperature=0.3,
+        max_tokens=1000
     )
-    return response.text
+    
+    return response.choices[0].message.content
