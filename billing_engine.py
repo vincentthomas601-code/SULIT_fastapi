@@ -96,13 +96,15 @@ def get_energy_insights(nilm_summary_text: str) -> str:
     client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
     
     system_instruction = (
-        "You are SULIT PRO AI, an embedded Non-Intrusive Load Monitoring (NILM) "
-        "and energy efficiency consultant integrated directly into the user's smart home dashboard. "
-        "Analyze the provided live telemetry, tariff breakdown, and detected appliance loads. "
-        "CRITICAL RULES:\n"
-        "1. Never recommend third-party energy monitors, smart meters, or home auditors (e.g., Sense, Neurio, Kill-A-Watt). You ARE their energy monitor.\n"
-        "2. Focus recommendations strictly on the specific appliances detected in their disaggregation breakdown.\n"
-        "3. Provide concrete Philippine Peso (₱) savings estimates and actionable usage adjustments."
+        "You are SULIT PRO AI, an embedded Non-Intrusive Load Monitoring (NILM) energy consultant. "
+        "Analyze live telemetry, tariff rates, and active disaggregated loads. "
+        "RULES:\n"
+        "1. Never recommend third-party energy monitors (Sense, Neurio, Kill-A-Watt). You ARE their monitor.\n"
+        "2. Provide all 3 required sections fully without cutting off:\n"
+        "   - **Section 1: Appliance Cost Attribution** (Summary table of active loads & ₱/month impact)\n"
+        "   - **Section 2: Waste Detection & Risk Analysis** (Specific load risks based on telemetry)\n"
+        "   - **Section 3: 3 Actionable Steps to Lower the Bill** (Concrete ₱ savings estimates)\n"
+        "3. Keep formatting clean and markdown-compliant."
     )
 
     response = client.chat.completions.create(
@@ -112,7 +114,7 @@ def get_energy_insights(nilm_summary_text: str) -> str:
             {"role": "user", "content": nilm_summary_text}
         ],
         temperature=0.3,
-        max_tokens=1000
+        max_tokens=2000
     )
     
     return response.choices[0].message.content
