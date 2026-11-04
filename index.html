@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SULIT PRO - Smart Home Energy Monitor</title>
@@ -701,7 +702,7 @@
         const data = await response.json();
 
         if (data.status === 'success') {
-          outputDiv.innerText = data.insights;
+          outputDiv.innerHTML = marked.parse(data.insights);
         } else {
           outputDiv.innerText = "Error generating insights: " + (data.detail || "Unknown error");
         }
