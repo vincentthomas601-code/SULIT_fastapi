@@ -93,10 +93,7 @@ def calculate_ph_electricity_bill(
 
 
 def get_energy_insights(nilm_summary_text: str) -> str:
-   # DO THIS:
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-
-# DO NOT put your actual key string ("gsk_...") here directly!
+    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
     
     system_instruction = (
         "You are SULIT PRO AI, an embedded Non-Intrusive Load Monitoring (NILM) "
