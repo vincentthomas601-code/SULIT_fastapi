@@ -103,7 +103,7 @@ def get_energy_insights(nilm_summary_text: str) -> str:
     )
 
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant", 
+        model="openai/gpt-oss-20b", 
         messages=[
             {"role": "system", "content": system_instruction},
             {"role": "user", "content": nilm_summary_text}
