@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import re
+import time
 from typing import Optional
 import pdfplumber
 from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header, Request
@@ -454,11 +455,33 @@ async def upload_ebill(
 def generate_insights(payload: InsightRequest, db: Session = Depends(get_db)):
     settings = get_or_create_device_settings(payload.device_id, db)
 
-    try:
-        report = get_energy_insights(payload.prompt_text)
-        return {"status": "success", "insights": report}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    max_retries = 3
+    base_delay = 2  # seconds
+
+    for attempt in range(max_retries):
+        try:
+            report = get_energy_insights(payload.prompt_text)
+            return {"status": "success", "insights": report}
+        except Exception as e:
+            err_msg = str(e)
+            
+            # Catch transient capacity issues (503 Unavailable, 429 Rate Limits, High Demand)
+            is_transient_error = any(
+                keyword in err_msg 
+                for keyword in ["503", "UNAVAILABLE", "high demand", "RESOURCE_EXHAUSTED", "429"]
+            )
+            
+            if is_transient_error and attempt < max_retries - 1:
+                time.sleep(base_delay * (attempt + 1))
+                continue
+
+            status_code = 503 if is_transient_error else 500
+            user_message = (
+                "Gemini AI service is currently under heavy traffic. Please wait a few seconds and try clicking 'Generate AI Report' again."
+                if is_transient_error else f"AI Error: {err_msg}"
+            )
+            
+            raise HTTPException(status_code=status_code, detail=user_message)
 
 
 @app.get("/api/v1/appliances/active")
