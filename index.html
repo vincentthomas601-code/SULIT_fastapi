@@ -668,7 +668,7 @@
       const outputDiv = document.getElementById('aiOutput');
       const btn = document.getElementById('aiBtn');
 
-      outputDiv.innerText = "⏳ SULIT AI is analyzing your consumption patterns and tariff rates...";
+      outputDiv.innerText = "⏳ SULIT AI is analyzing your live appliance telemetry and tariff rates...";
       btn.disabled = true;
 
       const kwh = currentBillingData ? currentBillingData.accumulated_kwh : 0;
@@ -676,16 +676,36 @@
       const rate = currentBillingData ? currentBillingData.effective_rate_per_kwh.toFixed(4) : '0.0000';
       const provider = currentBillingData ? currentBillingData.provider_name : 'Default Provider';
 
+      // Gather live active loads from NILM engine
+      let activeLoadsText = "No specific active transient loads detected currently.";
+      try {
+        const appRes = await fetch('/api/v1/appliances/active', {
+          headers: { 'X-Device-ID': getDeviceId() }
+        });
+        if (appRes.ok) {
+          const apps = await appRes.json();
+          if (apps.length > 0) {
+            activeLoadsText = apps.map(a => `${a.appliance_name} (${a.power_draw_w} W)`).join(', ');
+          }
+        }
+      } catch (e) {
+        console.warn('Could not fetch active appliances for AI context:', e);
+      }
+
       const payloadData = {
         device_id: getDeviceId(),
         prompt_text: `
-        Analyze this household energy usage:
-        - Consumption: ${kwh} kWh
-        - Current Estimated Bill: ₱ ${bill}
-        - Active Rate: ₱ ${rate} / kWh
-        - Distribution Provider: ${provider}
+        Analyze this live SULIT PRO metering telemetry:
+        - Total Usage: ${kwh} kWh
+        - Current Bill Estimate: ₱ ${bill}
+        - Effective Tariff Rate: ₱ ${rate} / kWh
+        - Distribution Utility: ${provider}
+        - Currently Active Disaggregated Loads (NILM 1D-ResNet): ${activeLoadsText}
 
-        Provide a concise cost breakdown evaluation, waste detection advice, and 3 specific steps to lower this bill.
+        Provide:
+        1. A brief appliance cost-attribution evaluation.
+        2. Detected waste risks based specifically on the active loads listed above.
+        3. 3 high-impact, actionable steps to lower the monthly bill.
         `
       };
 
@@ -702,7 +722,12 @@
         const data = await response.json();
 
         if (data.status === 'success') {
-          outputDiv.innerHTML = marked.parse(data.insights);
+          const cleanMarkdown = data.insights
+            .replace(/^```[a-z]*\n?/i, '')
+            .replace(/\n?```$/i, '')
+            .trim();
+
+          outputDiv.innerHTML = marked.parse(cleanMarkdown);
         } else {
           outputDiv.innerText = "Error generating insights: " + (data.detail || "Unknown error");
         }

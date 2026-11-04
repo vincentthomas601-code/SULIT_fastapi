@@ -93,13 +93,19 @@ def calculate_ph_electricity_bill(
 
 
 def get_energy_insights(nilm_summary_text: str) -> str:
-    # Initialize the Groq client securely
-    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+   # DO THIS:
+client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+
+# DO NOT put your actual key string ("gsk_...") here directly!
     
     system_instruction = (
-        "You are SULIT Energy AI, an expert Non-Intrusive Load Monitoring (NILM) "
-        "and energy efficiency consultant. Analyze appliance-level electricity "
-        "consumption data and utility tariff rates to give clear, actionable energy savings advice."
+        "You are SULIT PRO AI, an embedded Non-Intrusive Load Monitoring (NILM) "
+        "and energy efficiency consultant integrated directly into the user's smart home dashboard. "
+        "Analyze the provided live telemetry, tariff breakdown, and detected appliance loads. "
+        "CRITICAL RULES:\n"
+        "1. Never recommend third-party energy monitors, smart meters, or home auditors (e.g., Sense, Neurio, Kill-A-Watt). You ARE their energy monitor.\n"
+        "2. Focus recommendations strictly on the specific appliances detected in their disaggregation breakdown.\n"
+        "3. Provide concrete Philippine Peso (₱) savings estimates and actionable usage adjustments."
     )
 
     response = client.chat.completions.create(
