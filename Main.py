@@ -130,8 +130,6 @@ def startup_event():
     if not db.query(ProviderRule).first():
         scrape_utility_rates()
 
-    start_scheduler()
-
 
 @app.get("/")
 def serve_dashboard():
