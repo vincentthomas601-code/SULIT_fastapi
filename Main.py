@@ -22,7 +22,7 @@ from models import (
     ActiveApplianceSession,
 )
 from billing_engine import calculate_ph_electricity_bill, get_energy_insights
-from scraper import start_scheduler, scrape_utility_rates
+from scraper import scrape_utility_rates
 from dsp_features import extract_22d_features
 from ml_engine import classifier
 
