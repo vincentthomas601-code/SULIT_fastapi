@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import logging
 import re
 import time
 from typing import Optional
@@ -25,6 +26,8 @@ from billing_engine import calculate_ph_electricity_bill, get_energy_insights
 from scraper import scrape_utility_rates, start_scheduler
 from dsp_features import extract_22d_features
 from ml_engine import classifier
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Philippine NILM & Smart Billing Backend",
@@ -137,12 +140,10 @@ def get_or_create_device_settings(device_id: str, db: Session) -> UserSettings:
 def startup_event():
     ensure_database_columns()
     Base.metadata.create_all(bind=engine)
-    db = next(get_db())
-
-    # Initial sync of all PRESYO-PH providers on startup if database is empty.
-    if not db.query(ProviderRule).first():
-        scrape_utility_rates()
-
+    
+    # Force a fresh sync of PRESYO-PH benchmark rates on startup
+    scrape_utility_rates()
+    
     start_scheduler()
 
 
@@ -470,7 +471,7 @@ async def upload_ebill(
 @app.post("/api/insights")
 def generate_insights(payload: InsightRequest, db: Session = Depends(get_db)):
     device_id = normalize_device_id(payload.device_id)
-    settings = get_or_create_device_settings(device_id, db)
+    get_or_create_device_settings(device_id, db)
 
     max_retries = 3
     base_delay = 2  # seconds
@@ -480,25 +481,32 @@ def generate_insights(payload: InsightRequest, db: Session = Depends(get_db)):
             report = get_energy_insights(payload.prompt_text)
             return {"status": "success", "insights": report}
         except Exception as e:
-            err_msg = str(e)
-            
-            # Catch transient capacity issues (503 Unavailable, 429 Rate Limits, High Demand)
-            is_transient_error = any(
-                keyword in err_msg 
-                for keyword in ["503", "UNAVAILABLE", "high demand", "RESOURCE_EXHAUSTED", "429"]
+            status_code = getattr(e, "status_code", None)
+            is_transient_error = (
+                status_code == 429
+                or (isinstance(status_code, int) and status_code >= 500)
+                or isinstance(e, (TimeoutError, ConnectionError))
             )
             
             if is_transient_error and attempt < max_retries - 1:
                 time.sleep(base_delay * (attempt + 1))
                 continue
 
-            status_code = 503 if is_transient_error else 500
-            user_message = (
-                "Gemini AI service is currently under heavy traffic. Please wait a few seconds and try clicking 'Generate AI Report' again."
-                if is_transient_error else f"AI Error: {err_msg}"
-            )
-            
-            raise HTTPException(status_code=status_code, detail=user_message)
+            logger.exception("AI insight generation failed")
+            if is_transient_error:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Groq AI is temporarily unavailable. Please try again shortly."
+                ) from e
+            if isinstance(e, RuntimeError) and "GROQ_API_KEY is missing" in str(e):
+                raise HTTPException(
+                    status_code=503,
+                    detail="AI service is not configured. Set the GROQ_API_KEY environment variable."
+                ) from e
+            raise HTTPException(
+                status_code=502,
+                detail="Groq AI could not generate insights. Check the server logs for details."
+            ) from e
 
 
 @app.get("/api/v1/appliances/active")

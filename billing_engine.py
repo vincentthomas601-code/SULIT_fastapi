@@ -109,13 +109,13 @@ def get_energy_insights(nilm_summary_text: str) -> str:
     )
 
     response = client.chat.completions.create(
-        model="llama3-70b-8192", 
-        messages=[
-            {"role": "system", "content": system_instruction},
-            {"role": "user", "content": nilm_summary_text}
-        ],
-        temperature=0.3,
-        max_tokens=2500
-    )
+    model="llama-3.3-70b-versatile",
+    messages=[
+        {"role": "system", "content": system_instruction},
+        {"role": "user", "content": nilm_summary_text},
+    ],
+    temperature=0.3,
+    max_tokens=2500,
+)
     
     return response.choices[0].message.content
