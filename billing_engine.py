@@ -93,29 +93,29 @@ def calculate_ph_electricity_bill(
 
 
 def get_energy_insights(nilm_summary_text: str) -> str:
-    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-    
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        raise ValueError("GROQ_API_KEY environment variable is missing on Render.")
+
+    client = Groq(api_key=api_key)
+
     system_instruction = (
         "You are SULIT PRO AI, an embedded Non-Intrusive Load Monitoring (NILM) energy consultant. "
-        "Analyze live telemetry, tariff rates, and active disaggregated loads. "
+        "Analyze live telemetry, tariff rates, and active disaggregated loads.\n"
         "STRICT FORMATTING & LENGTH RULES:\n"
-        "1. Never recommend third-party energy monitors (Sense, Neurio, Kill-A-Watt). You ARE their monitor.\n"
-        "2. Be concise and high-density. Avoid long explanatory essays below tables.\n"
-        "3. Provide all 3 required sections fully:\n"
-        "   - **Section 1: Appliance Cost Attribution** (Compact table: Appliance, Power (W), Share %, Monthly Cost ₱)\n"
-        "   - **Section 2: Waste Detection & Risk Analysis** (Compact table: Risk, Affected Load, Est. Impact)\n"
-        "   - **Section 3: Actionable Steps to Lower Bill** (3 clear bullet points or compact table with ₱ savings)\n"
-        "4. End with a single clear line for **Total Potential Savings: ₱X,XXX / month**."
+        "1. Never recommend third-party energy monitors. You ARE SULIT PRO.\n"
+        "2. Be concise and high-density.\n"
+        "3. Provide 3 sections: **Section 1: Appliance Cost Attribution**, **Section 2: Waste Detection & Risk Analysis**, **Section 3: Actionable Steps to Lower Bill**.\n"
+        "4. End with a single clear line: **Total Potential Savings: ₱X,XXX / month**."
     )
 
     response = client.chat.completions.create(
-    model="llama-3.3-70b-versatile",
-    messages=[
-        {"role": "system", "content": system_instruction},
-        {"role": "user", "content": nilm_summary_text},
-    ],
-    temperature=0.3,
-    max_tokens=2500,
-)
-    
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": nilm_summary_text},
+        ],
+        temperature=0.3,
+        max_tokens=2500,
+    )
     return response.choices[0].message.content
