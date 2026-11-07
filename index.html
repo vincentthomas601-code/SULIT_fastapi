@@ -133,11 +133,11 @@
 
     </div>
 
-    <!-- Lower Section: 24-Hour Load Curve Profile & Interactive Toggle Simulator -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+    <!-- Lower Section: 24-Hour Load Curve Profile (Full Width) -->
+    <div class="grid grid-cols-1 gap-6 mb-6">
       
-      <!-- 24-Hour Consumption Profile Curve (2 Columns Wide) -->
-      <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg">
+      <!-- 24-Hour Consumption Profile Curve -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg">
         <div class="flex justify-between items-center mb-4">
           <div>
             <h2 class="text-base font-bold text-white">Consumption Profile</h2>
@@ -149,64 +149,6 @@
           </div>
         </div>
         <div id="load-profile-line-chart"></div>
-      </div>
-
-      <!-- Interactive UI Hardware Simulator Toggles (1 Column) -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg">
-        <div class="flex justify-between items-center mb-3">
-          <h2 class="text-base font-bold text-white">Interactive Simulator</h2>
-          <span class="px-2 py-0.5 text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded font-mono">LIVE LOAD TOGGLE</span>
-        </div>
-        <p class="text-xs text-slate-400 mb-4">Toggle devices ON/OFF to simulate real-time transient signals in backend.</p>
-
-        <div class="space-y-3">
-          <!-- Air Conditioner Toggle -->
-          <div class="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-lg">
-            <div>
-              <p class="text-xs font-bold text-slate-200">Air Conditioner (1.5 HP)</p>
-              <p class="text-[10px] text-slate-500 font-mono">800 Watts</p>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" onchange="toggleSimulatedLoad('Air Conditioner', 800, this.checked)" class="sr-only peer">
-              <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
-            </label>
-          </div>
-
-          <!-- Water Heater Toggle -->
-          <div class="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-lg">
-            <div>
-              <p class="text-xs font-bold text-slate-200">Water Heater</p>
-              <p class="text-[10px] text-slate-500 font-mono">1500 Watts</p>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" onchange="toggleSimulatedLoad('Water Heater', 1500, this.checked)" class="sr-only peer">
-              <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
-            </label>
-          </div>
-
-          <!-- Electric Fan Toggle -->
-          <div class="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-lg">
-            <div>
-              <p class="text-xs font-bold text-slate-200">Electric Fan</p>
-              <p class="text-[10px] text-slate-500 font-mono">110 Watts</p>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" onchange="toggleSimulatedLoad('Electric Fan', 110, this.checked)" class="sr-only peer">
-              <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
-            </label>
-          </div>
-        </div>
-
-        <!-- Telemetry Feed Inputs -->
-        <div class="mt-4 pt-3 border-t border-slate-800">
-          <label class="block text-[10px] text-slate-400 uppercase tracking-wider mb-2">⚡ Mock ESP32 Telemetry Feed</label>
-          <div class="flex space-x-2">
-            <input type="number" id="mock-kwh-input" value="310" step="0.1" class="w-1/2 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-sky-500">
-            <button onclick="sendMockTelemetry()" class="w-1/2 bg-amber-600 hover:bg-amber-500 text-white py-1.5 rounded-lg text-xs font-semibold transition">Push kWh</button>
-          </div>
-          <div id="telemetry-status" class="text-[10px] mt-1.5 text-slate-400">Push test value to simulate ESP32 transmission.</div>
-        </div>
-
       </div>
 
     </div>
@@ -402,31 +344,6 @@
       evtSource.onerror = function(err) {
         console.warn('[SSE] EventSource connection issue. Auto-reconnecting...', err);
       };
-    }
-
-    // Interactive Load Switch Simulator (Posts transient samples directly to API)
-    async function toggleSimulatedLoad(applianceName, watts, isTurningOn) {
-      const pBefore = 100.0;
-      const pAfter = isTurningOn ? (pBefore + watts) : (pBefore - watts);
-      const mockSamples = new Array(6000).fill(0).map(() => (Math.random() - 0.5) * 0.1);
-
-      try {
-        await fetch('/api/v1/events/transient', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            device_id: getDeviceId(),
-            p_before: pBefore,
-            p_after: pAfter,
-            pf_before: 0.92,
-            pf_after: 0.98,
-            raw_samples: mockSamples
-          })
-        });
-        refreshAllDashboardData();
-      } catch (err) {
-        console.error('Error toggling load:', err);
-      }
     }
 
     async function fetchProviders() {
@@ -644,39 +561,6 @@
         }
       } catch (e) {
         status.innerText = 'Failed to upload PDF.';
-      }
-    }
-
-    async function sendMockTelemetry() {
-      const input = document.getElementById('mock-kwh-input');
-      const status = document.getElementById('telemetry-status');
-      const kwhVal = parseFloat(input.value);
-
-      if (isNaN(kwhVal) || kwhVal < 0) {
-        return alert('Please enter a valid kWh value.');
-      }
-
-      status.innerText = `Sending ${kwhVal} kWh to telemetry...`;
-
-      try {
-        const res = await fetch('/api/v1/telemetry', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            device_id: getDeviceId(),
-            kwh: kwhVal
-          })
-        });
-
-        const data = await res.json();
-        if (res.ok) {
-          status.innerText = `✅ Telemetry stored: ${kwhVal} kWh`;
-          fetchLiveBilling();
-        } else {
-          status.innerText = `Error: ${data.detail || 'Failed to send telemetry.'}`;
-        }
-      } catch (err) {
-        status.innerText = 'Failed to connect to telemetry backend.';
       }
     }
 

@@ -92,12 +92,38 @@ class InsightRequest(BaseModel):
     prompt_text: str
 
 
+def normalize_device_id(device_id: Optional[str]) -> str:
+    if device_id is None:
+        raise HTTPException(status_code=400, detail="Device ID is required.")
+    normalized = device_id.strip()
+    if not normalized or normalized.lower() == "default_device":
+        raise HTTPException(status_code=400, detail="A valid device ID is required.")
+    return normalized
+
+
+def ensure_database_columns():
+    """Add missing SQLite columns without mutating valid schemas."""
+    with engine.connect() as conn:
+        user_columns = conn.execute(text("PRAGMA table_info(user_settings)")).fetchall()
+        existing_user_columns = {column[1] for column in user_columns}
+        if "device_id" not in existing_user_columns:
+            conn.execute(text("ALTER TABLE user_settings ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
+
+        telemetry_columns = conn.execute(text("PRAGMA table_info(telemetry_logs)")).fetchall()
+        existing_telemetry_columns = {column[1] for column in telemetry_columns}
+        if "device_id" not in existing_telemetry_columns:
+            conn.execute(text("ALTER TABLE telemetry_logs ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
+
+        conn.commit()
+
+
 def get_or_create_device_settings(device_id: str, db: Session) -> UserSettings:
     """Helper function to fetch or create settings tied exclusively to a device_id."""
-    settings = db.query(UserSettings).filter(UserSettings.device_id == device_id).first()
+    normalized = normalize_device_id(device_id)
+    settings = db.query(UserSettings).filter(UserSettings.device_id == normalized).first()
     if not settings:
         settings = UserSettings(
-            device_id=device_id,
+            device_id=normalized,
             selected_provider="MERALCO",
             use_custom_rate=False
         )
@@ -109,29 +135,21 @@ def get_or_create_device_settings(device_id: str, db: Session) -> UserSettings:
 
 @app.on_event("startup")
 def startup_event():
-    # Auto-migrate missing columns for existing SQLite database file
-    with engine.connect() as conn:
-        try:
-            conn.execute(text("ALTER TABLE user_settings ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
-            conn.commit()
-        except Exception:
-            pass
-            
-        try:
-            conn.execute(text("ALTER TABLE telemetry_logs ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
-            conn.commit()
-        except Exception:
-            pass
-
+    ensure_database_columns()
     Base.metadata.create_all(bind=engine)
     db = next(get_db())
 
-    # Initial sync of all PRESYO-PH providers on startup if database is empty
+    # Initial sync of all PRESYO-PH providers on startup if database is empty.
     if not db.query(ProviderRule).first():
         scrape_utility_rates()
-        
-    # START THE BACKGROUND SCHEDULER
+
     start_scheduler()
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    from scraper import stop_scheduler
+    stop_scheduler()
 
 
 @app.get("/")
@@ -169,14 +187,14 @@ async def stream_events(request: Request):
 
 @app.post("/api/v1/telemetry")
 async def ingest_telemetry(data: TelemetryInput, db: Session = Depends(get_db)):
-    log_entry = TelemetryLog(device_id=data.device_id, accumulated_kwh=data.kwh)
+    device_id = normalize_device_id(data.device_id)
+    log_entry = TelemetryLog(device_id=device_id, accumulated_kwh=data.kwh)
     db.add(log_entry)
     db.commit()
 
-    # Broadcast telemetry update to dashboard
     await broadcaster.broadcast({
         "type": "TELEMETRY_UPDATED",
-        "device_id": data.device_id,
+        "device_id": device_id,
         "kwh": data.kwh
     })
 
@@ -185,6 +203,7 @@ async def ingest_telemetry(data: TelemetryInput, db: Session = Depends(get_db)):
 
 @app.post("/api/v1/events/transient")
 async def process_transient_event(data: TransientEventInput, db: Session = Depends(get_db)):
+    device_id = normalize_device_id(data.device_id)
     delta_p = data.p_after - data.p_before
 
     # 1. Extract 22-dimensional feature vector via DSP module
@@ -199,16 +218,16 @@ async def process_transient_event(data: TransientEventInput, db: Session = Depen
     # 2. Positive step: TURN-ON event classification via ONNX ResNet
     if delta_p >= 15.0:  # >0.15A step threshold at 220V
         appliance_name, confidence = classifier.predict(features_22d)
-        
+
         event_log = ApplianceEvent(
-            device_id=data.device_id,
+            device_id=device_id,
             appliance_name=appliance_name,
             event_type="TURN_ON",
             delta_power_w=delta_p,
             confidence=confidence
         )
         session_entry = ActiveApplianceSession(
-            device_id=data.device_id,
+            device_id=device_id,
             appliance_name=appliance_name,
             power_draw_w=delta_p,
             is_active=True
@@ -217,10 +236,9 @@ async def process_transient_event(data: TransientEventInput, db: Session = Depen
         db.add(session_entry)
         db.commit()
 
-        # Push SSE real-time notification to open browser clients
         await broadcaster.broadcast({
             "type": "TRANSIENT_DETECTED",
-            "device_id": data.device_id,
+            "device_id": device_id,
             "event_type": "TURN_ON",
             "appliance_name": appliance_name,
             "delta_power_w": round(delta_p, 2),
@@ -239,7 +257,7 @@ async def process_transient_event(data: TransientEventInput, db: Session = Depen
     elif delta_p <= -15.0:
         abs_delta = abs(delta_p)
         active_sessions = db.query(ActiveApplianceSession).filter(
-            ActiveApplianceSession.device_id == data.device_id,
+            ActiveApplianceSession.device_id == device_id,
             ActiveApplianceSession.is_active == True
         ).all()
 
@@ -251,7 +269,7 @@ async def process_transient_event(data: TransientEventInput, db: Session = Depen
         closest_session.is_active = False
         
         event_log = ApplianceEvent(
-            device_id=data.device_id,
+            device_id=device_id,
             appliance_name=closest_session.appliance_name,
             event_type="TURN_OFF",
             delta_power_w=delta_p,
@@ -260,10 +278,9 @@ async def process_transient_event(data: TransientEventInput, db: Session = Depen
         db.add(event_log)
         db.commit()
 
-        # Push SSE real-time notification to open browser clients
         await broadcaster.broadcast({
             "type": "TRANSIENT_DETECTED",
-            "device_id": data.device_id,
+            "device_id": device_id,
             "event_type": "TURN_OFF",
             "appliance_name": closest_session.appliance_name,
             "delta_power_w": round(delta_p, 2),
@@ -282,25 +299,24 @@ async def process_transient_event(data: TransientEventInput, db: Session = Depen
 
 @app.get("/api/v1/billing/live")
 def get_live_billing(
-    x_device_id: str = Header("default_device", alias="X-Device-ID"),
+    x_device_id: str = Header(..., alias="X-Device-ID"),
     db: Session = Depends(get_db)
 ):
-    settings = get_or_create_device_settings(x_device_id, db)
+    device_id = normalize_device_id(x_device_id)
+    settings = get_or_create_device_settings(device_id, db)
 
-    # Fetch latest telemetry log for this device
     latest_telemetry = (
         db.query(TelemetryLog)
-        .filter(TelemetryLog.device_id == x_device_id)
+        .filter(TelemetryLog.device_id == device_id)
         .order_by(TelemetryLog.id.desc())
         .first()
     )
 
-    # TEMPORARY PLACEHOLDER: Auto-insert a 310.0 kWh fake ESP32 database entry if no log exists
     if not latest_telemetry:
-        latest_telemetry = TelemetryLog(device_id=x_device_id, accumulated_kwh=310.0)
-        db.add(latest_telemetry)
-        db.commit()
-        db.refresh(latest_telemetry)
+        raise HTTPException(
+            status_code=404,
+            detail=f"No telemetry has been recorded for device '{device_id}' yet."
+        )
 
     accumulated_kwh = latest_telemetry.accumulated_kwh
 
@@ -309,12 +325,10 @@ def get_live_billing(
     if not rule:
         rule = db.query(ProviderRule).first()
 
-    # Manual / e-Bill Override Mode: Treat custom rate as an ALL-INCLUSIVE rate
     if settings.use_custom_rate and settings.custom_rate and settings.custom_rate > 0:
         active_rate = settings.custom_rate
         rate_status = "CUSTOM_OVERRIDE"
-        
-        # Directly compute all-inclusive bill (kWh * Custom Rate)
+
         total_bill = round(accumulated_kwh * active_rate, 2)
         dist_charge = round(rule.base_distribution_fee, 2) if (rule and rule.base_distribution_fee) else 0.0
         if dist_charge > total_bill:
@@ -332,7 +346,6 @@ def get_live_billing(
             "energy_tax_php": 0.0
         }
     else:
-        # Standard unbundled ERC benchmark calculation
         latest_rate_entry = (
             db.query(ProviderRate)
             .filter(ProviderRate.provider_code == provider_code)
@@ -383,10 +396,11 @@ def get_providers(db: Session = Depends(get_db)):
 @app.post("/api/v1/settings")
 def update_settings(
     payload: UserSettingsUpdate,
-    x_device_id: str = Header("default_device", alias="X-Device-ID"),
+    x_device_id: str = Header(..., alias="X-Device-ID"),
     db: Session = Depends(get_db)
 ):
-    settings = get_or_create_device_settings(x_device_id, db)
+    device_id = normalize_device_id(x_device_id)
+    settings = get_or_create_device_settings(device_id, db)
 
     if payload.selected_provider is not None:
         settings.selected_provider = payload.selected_provider
@@ -396,15 +410,16 @@ def update_settings(
         settings.custom_rate = payload.custom_rate
 
     db.commit()
-    return {"status": "SUCCESS", "message": f"User settings updated successfully for device {x_device_id}."}
+    return {"status": "SUCCESS", "message": f"User settings updated successfully for device {device_id}."}
 
 
 @app.post("/api/v1/billing/upload-ebill")
 async def upload_ebill(
     file: UploadFile = File(...),
-    x_device_id: str = Header("default_device", alias="X-Device-ID"),
+    x_device_id: str = Header(..., alias="X-Device-ID"),
     db: Session = Depends(get_db)
 ):
+    device_id = normalize_device_id(x_device_id)
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
@@ -435,7 +450,7 @@ async def upload_ebill(
 
         effective_rate = round(total_amount / total_kwh, 4)
 
-        settings = get_or_create_device_settings(x_device_id, db)
+        settings = get_or_create_device_settings(device_id, db)
         settings.use_custom_rate = True
         settings.custom_rate = effective_rate
         db.commit()
@@ -445,7 +460,7 @@ async def upload_ebill(
             "parsed_amount_php": total_amount,
             "parsed_kwh": total_kwh,
             "calculated_effective_rate_php": effective_rate,
-            "message": f"Successfully parsed e-Bill. Effective rate set to ₱{effective_rate}/kWh for device {x_device_id}."
+            "message": f"Successfully parsed e-Bill. Effective rate set to ₱{effective_rate}/kWh for device {device_id}."
         }
 
     except Exception as err:
@@ -454,7 +469,8 @@ async def upload_ebill(
 
 @app.post("/api/insights")
 def generate_insights(payload: InsightRequest, db: Session = Depends(get_db)):
-    settings = get_or_create_device_settings(payload.device_id, db)
+    device_id = normalize_device_id(payload.device_id)
+    settings = get_or_create_device_settings(device_id, db)
 
     max_retries = 3
     base_delay = 2  # seconds
@@ -487,12 +503,13 @@ def generate_insights(payload: InsightRequest, db: Session = Depends(get_db)):
 
 @app.get("/api/v1/appliances/active")
 def get_active_appliances(
-    x_device_id: str = Header("default_device", alias="X-Device-ID"),
+    x_device_id: str = Header(..., alias="X-Device-ID"),
     db: Session = Depends(get_db)
 ):
     """Returns currently running appliances for the device session."""
+    device_id = normalize_device_id(x_device_id)
     active_sessions = db.query(ActiveApplianceSession).filter(
-        ActiveApplianceSession.device_id == x_device_id,
+        ActiveApplianceSession.device_id == device_id,
         ActiveApplianceSession.is_active == True
     ).all()
 
@@ -509,13 +526,14 @@ def get_active_appliances(
 
 @app.get("/api/v1/events/recent")
 def get_recent_events(
-    x_device_id: str = Header("default_device", alias="X-Device-ID"),
+    x_device_id: str = Header(..., alias="X-Device-ID"),
     db: Session = Depends(get_db)
 ):
     """Returns recent transient switching event logs for audit."""
+    device_id = normalize_device_id(x_device_id)
     events = (
         db.query(ApplianceEvent)
-        .filter(ApplianceEvent.device_id == x_device_id)
+        .filter(ApplianceEvent.device_id == device_id)
         .order_by(ApplianceEvent.id.desc())
         .limit(20)
         .all()
