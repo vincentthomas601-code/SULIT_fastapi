@@ -23,7 +23,6 @@ from models import (
     ActiveApplianceSession,
 )
 from billing_engine import calculate_ph_electricity_bill, get_energy_insights
-from scraper import scrape_utility_rates, start_scheduler
 from dsp_features import extract_22d_features
 from ml_engine import classifier
 
@@ -105,19 +104,20 @@ def normalize_device_id(device_id: Optional[str]) -> str:
 
 
 def ensure_database_columns():
-    """Add missing SQLite columns without mutating valid schemas."""
-    with engine.connect() as conn:
-        user_columns = conn.execute(text("PRAGMA table_info(user_settings)")).fetchall()
-        existing_user_columns = {column[1] for column in user_columns}
-        if "device_id" not in existing_user_columns:
-            conn.execute(text("ALTER TABLE user_settings ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
+    """Add missing columns for SQLite without crashing PostgreSQL."""
+    if engine.name == "sqlite":
+        with engine.connect() as conn:
+            user_columns = conn.execute(text("PRAGMA table_info(user_settings)")).fetchall()
+            existing_user_columns = {column[1] for column in user_columns}
+            if "device_id" not in existing_user_columns:
+                conn.execute(text("ALTER TABLE user_settings ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
 
-        telemetry_columns = conn.execute(text("PRAGMA table_info(telemetry_logs)")).fetchall()
-        existing_telemetry_columns = {column[1] for column in telemetry_columns}
-        if "device_id" not in existing_telemetry_columns:
-            conn.execute(text("ALTER TABLE telemetry_logs ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
+            telemetry_columns = conn.execute(text("PRAGMA table_info(telemetry_logs)")).fetchall()
+            existing_telemetry_columns = {column[1] for column in telemetry_columns}
+            if "device_id" not in existing_telemetry_columns:
+                conn.execute(text("ALTER TABLE telemetry_logs ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
 
-        conn.commit()
+            conn.commit()
 
 
 def get_or_create_device_settings(device_id: str, db: Session) -> UserSettings:
@@ -140,17 +140,6 @@ def get_or_create_device_settings(device_id: str, db: Session) -> UserSettings:
 def startup_event():
     ensure_database_columns()
     Base.metadata.create_all(bind=engine)
-    
-    # Force a fresh sync of PRESYO-PH benchmark rates on startup
-    scrape_utility_rates()
-    
-    start_scheduler()
-
-
-@app.on_event("shutdown")
-def shutdown_event():
-    from scraper import stop_scheduler
-    stop_scheduler()
 
 
 @app.get("/")
@@ -207,7 +196,6 @@ async def process_transient_event(data: TransientEventInput, db: Session = Depen
     device_id = normalize_device_id(data.device_id)
     delta_p = data.p_after - data.p_before
 
-    # 1. Extract 22-dimensional feature vector via DSP module
     features_22d = extract_22d_features(
         raw_samples=data.raw_samples,
         p_before=data.p_before,
@@ -216,8 +204,7 @@ async def process_transient_event(data: TransientEventInput, db: Session = Depen
         pf_after=data.pf_after
     )
 
-    # 2. Positive step: TURN-ON event classification via ONNX ResNet
-    if delta_p >= 15.0:  # >0.15A step threshold at 220V
+    if delta_p >= 15.0: 
         appliance_name, confidence = classifier.predict(features_22d)
 
         event_log = ApplianceEvent(
@@ -254,7 +241,6 @@ async def process_transient_event(data: TransientEventInput, db: Session = Depen
             "confidence": confidence
         }
 
-    # 3. Negative step: TURN-OFF event cost attribution matching
     elif delta_p <= -15.0:
         abs_delta = abs(delta_p)
         active_sessions = db.query(ActiveApplianceSession).filter(
@@ -265,7 +251,6 @@ async def process_transient_event(data: TransientEventInput, db: Session = Depen
         if not active_sessions:
             return {"status": "SUCCESS", "event": "TURN_OFF", "message": "No matching active session found."}
 
-        # Match negative step to active appliance session with the closest power draw
         closest_session = min(active_sessions, key=lambda s: abs(s.power_draw_w - abs_delta))
         closest_session.is_active = False
         
@@ -474,7 +459,7 @@ def generate_insights(payload: InsightRequest, db: Session = Depends(get_db)):
     get_or_create_device_settings(device_id, db)
 
     max_retries = 3
-    base_delay = 2  # seconds
+    base_delay = 2  
 
     for attempt in range(max_retries):
         try:

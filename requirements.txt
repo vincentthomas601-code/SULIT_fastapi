@@ -1,15 +1,9 @@
 fastapi
 uvicorn
 sqlalchemy
+psycopg2-binary
 pydantic
-google-genai
-python-multipart
 pdfplumber
 beautifulsoup4
 requests
 apscheduler
-numpy
-scipy
-onnxruntime
-groq==0.11.0
-httpx==0.27.2

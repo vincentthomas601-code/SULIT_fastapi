@@ -108,3 +108,5 @@ def start_scheduler():
     scheduler.add_job(scrape_utility_rates, "cron", day=10, hour=2, minute=0)
     scheduler.start()
     logger.info("APScheduler PRESYO-PH worker initialized.")
+    if __name__ == "__main__":
+        scrape_utility_rates()
