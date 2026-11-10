@@ -8,7 +8,7 @@ beautifulsoup4
 requests
 apscheduler
 google-genai
-python-multipar
+python-multipart
 numpy
 scipy
 onnxruntime
