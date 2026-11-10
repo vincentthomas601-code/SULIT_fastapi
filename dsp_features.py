@@ -1,7 +1,5 @@
 import numpy as np
-from scipy.fft import fft
 
-# 11 appliance classes retained from the WHITED dataset
 APPLIANCE_CLASSES = [
     "Air Conditioner", "Fan", "Fridge", "Hair Dryer", "Heater", 
     "Kettle", "Lighting", "Microwave", "Pump", "Toaster", "Vacuum"
@@ -15,56 +13,64 @@ def extract_22d_features(
     pf_after: float
 ) -> np.ndarray:
     """
-    Extracts the 22-dimensional feature vector:
-    - Features 1-2: Path A PZEM power step (Delta P) and power factor step (Delta PF)
-    - Features 3-22: Path B SCT-013 30 kHz current transient window metrics (6,000 samples)
+    Extracts exact 22-dimensional feature vector by calculating the DIFFERENCE 
+    between the pre-transient window and post-transient window.
     """
     signal = np.array(raw_samples, dtype=np.float32)
-
-    # Features 1-2: Steady-state steps from PZEM (Path A)
-    delta_p = p_after - p_before
-    delta_pf = pf_after - pf_before
-
-    # Features 3-10: Waveform Time-Domain Metrics (Path B)
-    rms_val = float(np.sqrt(np.mean(signal ** 2)))
-    peak_val = float(np.max(np.abs(signal)))
-    crest_factor = float(peak_val / (rms_val + 1e-6))
-    std_val = float(np.std(signal))
-    max_slope = float(np.max(np.abs(np.diff(signal))))
-    mean_slope = float(np.mean(np.abs(np.diff(signal))))
-
-    # Zero-crossing dynamics (phase alignment)
-    zero_crossings = np.where(np.diff(np.signbit(signal)))[0]
-    zc_count = float(len(zero_crossings))
-
-    # Features 11-22: Frequency Domain & Normalized Harmonics (I_h / I_1)
-    n = len(signal)
-    fft_spectrum = np.abs(fft(signal))[:n // 2]
     
-    # Fundamental frequency bin (60 Hz grid)
-    fundamental_idx = np.argmax(fft_spectrum[1:]) + 1
-    i1 = fft_spectrum[fundamental_idx] + 1e-6
+    # Split into pre-event and post-event windows (3000 samples each)
+    midpoint = len(signal) // 2
+    pre_window = signal[:midpoint]
+    post_window = signal[midpoint:]
 
-    # Extract harmonic amplitude ratios (h=2 through h=12 relative to fundamental)
-    harmonics = []
-    for h in range(2, 13):
-        h_idx = min(fundamental_idx * h, len(fft_spectrum) - 1)
-        harmonics.append(float(fft_spectrum[h_idx] / i1))
+    # 1. Remove ADC DC Offset per window independently
+    pre_window = pre_window - np.mean(pre_window)
+    post_window = post_window - np.mean(post_window)
 
-    thd = float(np.sqrt(np.sum(np.array(harmonics) ** 2)))
+    # Features 1-2: Steady-state step changes (PZEM)
+    delta_p = float(p_after - p_before)
+    delta_pf = float(pf_after - pf_before)
 
-    # Combine into 22-dimensional array matching PyTorch model input order
-    features = [
-        delta_p, delta_pf, rms_val, peak_val, crest_factor, std_val,
-        max_slope, mean_slope, zc_count, thd, *harmonics
-    ]
+    def extract_window_metrics(win: np.ndarray) -> np.ndarray:
+        rms_val = np.sqrt(np.mean(win ** 2))
+        peak_val = np.max(np.abs(win))
+        crest_factor = peak_val / (rms_val + 1e-6)
+        std_val = np.std(win)
+        
+        diff_win = np.diff(win)
+        max_slope = np.max(np.abs(diff_win)) if len(diff_win) > 0 else 0.0
+        mean_slope = np.mean(np.abs(diff_win)) if len(diff_win) > 0 else 0.0
+        
+        zc_count = len(np.where(np.diff(np.signbit(win)))[0])
 
-    features_array = np.array(features, dtype=np.float32)
+        fft_spectrum = np.abs(np.fft.rfft(win))
+        # 60Hz Fundamental Bin fixed for 3000 samples @ 30kHz (10 Hz per bin -> Bin 6)
+        fundamental_idx = 6 if len(fft_spectrum) > 6 else np.argmax(fft_spectrum[1:]) + 1
+        i1 = fft_spectrum[fundamental_idx] + 1e-6
+
+        harmonics = []
+        for h in range(2, 13):
+            h_idx = min(fundamental_idx * h, len(fft_spectrum) - 1)
+            harmonics.append(fft_spectrum[h_idx] / i1)
+
+        thd = np.sqrt(np.sum(np.array(harmonics) ** 2))
+
+        return np.array([
+            rms_val, peak_val, crest_factor, std_val,
+            max_slope, mean_slope, zc_count, thd, i1, *harmonics
+        ], dtype=np.float32)
+
+    # Compute differential features (Post - Pre)
+    pre_metrics = extract_window_metrics(pre_window)
+    post_metrics = extract_window_metrics(post_window)
+    diff_metrics = post_metrics - pre_metrics
+
+    # Assemble exact 22D vector
+    features = np.concatenate(([delta_p, delta_pf], diff_metrics))
     
-    # Enforce exact 22-dimension vector size
-    if len(features_array) < 22:
-        features_array = np.pad(features_array, (0, 22 - len(features_array)), 'constant')
-    elif len(features_array) > 22:
-        features_array = features_array[:22]
+    if len(features) < 22:
+        features = np.pad(features, (0, 22 - len(features)), 'constant')
+    elif len(features) > 22:
+        features = features[:22]
 
-    return features_array
+    return features

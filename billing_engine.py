@@ -1,22 +1,33 @@
 import os
+import logging
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict
 from groq import Groq
 
+logger = logging.getLogger("BillingEngine")
+
+def _to_decimal(val: float) -> Decimal:
+    return Decimal(str(val))
 
 def calculate_ph_electricity_bill(
-    accumulated_kwh: float,
+    net_cycle_kwh: float,
     benchmark_rate: float,
     provider_rule: Any
 ) -> Dict[str, Any]:
     """
-    Calculates unbundled Philippine residential electricity bill.
+    Calculates unbundled Philippine residential bill using exact Decimal arithmetic.
+    Accurately attributes Lifeline Discounts and BP Blg. 36 Energy Tax.
     """
-    if accumulated_kwh <= 0:
+    kwh = max(Decimal("0.0"), _to_decimal(net_cycle_kwh))
+    bench_rate = _to_decimal(benchmark_rate)
+    tier_1_dist = _to_decimal(provider_rule.tier_1_rate)
+
+    if kwh <= Decimal("0.0"):
         return {
             "accumulated_kwh": 0.0,
-            "benchmark_rate": benchmark_rate,
-            "implied_variable_rate": max(0.0, benchmark_rate - provider_rule.tier_1_rate),
-            "applied_distribution_rate": provider_rule.tier_1_rate,
+            "benchmark_rate": float(bench_rate),
+            "implied_variable_rate": float(max(Decimal("0.0"), bench_rate - tier_1_dist)),
+            "applied_distribution_rate": float(tier_1_dist),
             "variable_charge_php": 0.0,
             "distribution_charge_php": 0.0,
             "pre_discount_subtotal_php": 0.0,
@@ -24,98 +35,102 @@ def calculate_ph_electricity_bill(
             "lifeline_discount_php": 0.0,
             "energy_tax_php": 0.0,
             "total_bill_php": 0.0,
-            "effective_rate_per_kwh": benchmark_rate
+            "effective_rate_per_kwh": float(bench_rate)
         }
 
-    # Step 1: Deconstruct 200 kWh Benchmark Rate
-    base_dist_rate = provider_rule.tier_1_rate
-    implied_variable_rate = max(0.0, benchmark_rate - base_dist_rate)
+    implied_variable_rate = max(Decimal("0.0"), bench_rate - tier_1_dist)
 
-    # Step 2: Whole-Consumption Re-Rating for Distribution Tier
-    if accumulated_kwh <= provider_rule.tier_1_max_kwh:           # 1 – 200 kWh
-        applied_dist_rate = provider_rule.tier_1_rate
-    elif accumulated_kwh <= provider_rule.tier_2_max_kwh:         # 201 – 300 kWh
-        applied_dist_rate = provider_rule.tier_2_rate
-    elif accumulated_kwh <= provider_rule.tier_3_max_kwh:         # 301 – 400 kWh
-        applied_dist_rate = provider_rule.tier_3_rate
-    else:                                                          # > 400 kWh
-        applied_dist_rate = provider_rule.tier_4_rate
+    if kwh <= _to_decimal(provider_rule.tier_1_max_kwh):
+        applied_dist_rate = _to_decimal(provider_rule.tier_1_rate)
+    elif kwh <= _to_decimal(provider_rule.tier_2_max_kwh):
+        applied_dist_rate = _to_decimal(provider_rule.tier_2_rate)
+    elif kwh <= _to_decimal(provider_rule.tier_3_max_kwh):
+        applied_dist_rate = _to_decimal(provider_rule.tier_3_rate)
+    else:
+        applied_dist_rate = _to_decimal(provider_rule.tier_4_rate)
 
-    variable_charge = accumulated_kwh * implied_variable_rate
-    distribution_charge = accumulated_kwh * applied_dist_rate
+    variable_charge = kwh * implied_variable_rate
+    distribution_charge = kwh * applied_dist_rate
     pre_discount_subtotal = variable_charge + distribution_charge
 
-    # Step 3: ERC Lifeline Discount
-    lifeline_discount_pct = 0.0
-    if accumulated_kwh <= 50.0:
-        lifeline_discount_pct = 1.00      # 100% discount
-    elif accumulated_kwh <= 70.0:
-        lifeline_discount_pct = 0.35      # 35% discount
-    elif accumulated_kwh <= 100.0:
-        lifeline_discount_pct = 0.20      # 20% discount
+    # ERC Lifeline Discount Matrix
+    lifeline_pct = Decimal("0.00")
+    if kwh <= Decimal("50.0"):
+        lifeline_pct = Decimal("1.00")
+    elif kwh <= Decimal("70.0"):
+        lifeline_pct = Decimal("0.35")
+    elif kwh <= Decimal("100.0"):
+        lifeline_pct = Decimal("0.20")
 
-    lifeline_discount_php = pre_discount_subtotal * lifeline_discount_pct
+    lifeline_discount_php = pre_discount_subtotal * lifeline_pct
     discounted_subtotal = pre_discount_subtotal - lifeline_discount_php
 
-    # Step 4: Marginal Energy Tax (Batas Pambansa Blg. 36)
-    effective_base_rate = discounted_subtotal / accumulated_kwh
-    energy_tax_php = 0.0
+    # Energy Tax (Batas Pambansa Blg. 36)
+    effective_base_rate = discounted_subtotal / kwh
+    energy_tax_php = Decimal("0.00")
 
-    if accumulated_kwh > 650.0:
-        excess_tier_a = min(accumulated_kwh, 1000.0) - 650.0
-        energy_tax_php += excess_tier_a * effective_base_rate * 0.10
+    if kwh > Decimal("650.0"):
+        excess_a = min(kwh, Decimal("1000.0")) - Decimal("650.0")
+        energy_tax_php += excess_a * effective_base_rate * Decimal("0.10")
 
-    if accumulated_kwh > 1000.0:
-        excess_tier_b = min(accumulated_kwh, 1500.0) - 1000.0
-        energy_tax_php += excess_tier_b * effective_base_rate * 0.20
+    if kwh > Decimal("1000.0"):
+        excess_b = min(kwh, Decimal("1500.0")) - Decimal("1000.0")
+        energy_tax_php += excess_b * effective_base_rate * Decimal("0.20")
 
-    if accumulated_kwh > 1500.0:
-        excess_tier_c = accumulated_kwh - 1500.0
-        energy_tax_php += excess_tier_c * effective_base_rate * 0.35
+    if kwh > Decimal("1500.0"):
+        excess_c = kwh - Decimal("1500.0")
+        energy_tax_php += excess_c * effective_base_rate * Decimal("0.35")
 
     total_bill_php = discounted_subtotal + energy_tax_php
-    effective_rate_per_kwh = total_bill_php / accumulated_kwh
+    effective_rate = total_bill_php / kwh
+
+    def _r2(d: Decimal) -> float:
+        return float(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+    def _r4(d: Decimal) -> float:
+        return float(d.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
 
     return {
-        "accumulated_kwh": round(accumulated_kwh, 4),
-        "benchmark_rate": round(benchmark_rate, 4),
-        "implied_variable_rate": round(implied_variable_rate, 4),
-        "applied_distribution_rate": round(applied_dist_rate, 4),
-        "variable_charge_php": round(variable_charge, 2),
-        "distribution_charge_php": round(distribution_charge, 2),
-        "pre_discount_subtotal_php": round(pre_discount_subtotal, 2),
-        "lifeline_discount_percentage": lifeline_discount_pct * 100,
-        "lifeline_discount_php": round(lifeline_discount_php, 2),
-        "energy_tax_php": round(energy_tax_php, 2),
-        "total_bill_php": round(total_bill_php, 2),
-        "effective_rate_per_kwh": round(effective_rate_per_kwh, 4)
+        "accumulated_kwh": _r4(kwh),
+        "benchmark_rate": _r4(bench_rate),
+        "implied_variable_rate": _r4(implied_variable_rate),
+        "applied_distribution_rate": _r4(applied_dist_rate),
+        "variable_charge_php": _r2(variable_charge),
+        "distribution_charge_php": _r2(distribution_charge),
+        "pre_discount_subtotal_php": _r2(pre_discount_subtotal),
+        "lifeline_discount_percentage": _r2(lifeline_pct * Decimal("100")),
+        "lifeline_discount_php": _r2(lifeline_discount_php),
+        "energy_tax_php": _r2(energy_tax_php),
+        "total_bill_php": _r2(total_bill_php),
+        "effective_rate_per_kwh": _r4(effective_rate)
     }
 
-
-def get_energy_insights(nilm_summary_text: str) -> str:
+def get_energy_insights(telemetry_summary: str) -> str:
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        raise ValueError("GROQ_API_KEY environment variable is missing on Render.")
+        raise ValueError("GROQ_API_KEY environment variable is missing on server.")
 
     client = Groq(api_key=api_key)
 
     system_instruction = (
-        "You are SULIT PRO AI, an embedded Non-Intrusive Load Monitoring (NILM) energy consultant. "
-        "Analyze live telemetry, tariff rates, and active disaggregated loads.\n"
-        "STRICT FORMATTING & LENGTH RULES:\n"
-        "1. Never recommend third-party energy monitors. You ARE SULIT PRO.\n"
-        "2. Be concise and high-density.\n"
-        "3. Provide 3 sections: **Section 1: Appliance Cost Attribution**, **Section 2: Waste Detection & Risk Analysis**, **Section 3: Actionable Steps to Lower Bill**.\n"
-        "4. End with a single clear line: **Total Potential Savings: ₱X,XXX / month**."
+        "You are SULIT PRO AI, an embedded NILM energy consultant.\n"
+        "Analyze the provided structured telemetry metrics to generate actionable cost optimization insights.\n"
+        "STRICT RULES:\n"
+        "1. Never recommend 3rd-party hardware. You ARE SULIT PRO.\n"
+        "2. Provide 3 clear markdown sections:\n"
+        "   - **Section 1: Appliance Cost Attribution**\n"
+        "   - **Section 2: Waste Detection & Risk Analysis**\n"
+        "   - **Section 3: Actionable Steps to Lower Bill**\n"
+        "3. Conclude with a single line: **Total Potential Savings: ₱X,XXX / month**"
     )
 
     response = client.chat.completions.create(
-        model="openai/gpt-oss-20b",
+        model="mixtral-8x7b-32768",
         messages=[
             {"role": "system", "content": system_instruction},
-            {"role": "user", "content": nilm_summary_text},
+            {"role": "user", "content": telemetry_summary},
         ],
-        temperature=0.3,
-        max_tokens=2500,
+        temperature=0.2,
+        max_tokens=1500,
     )
     return response.choices[0].message.content
