@@ -285,7 +285,7 @@ async def process_transient_event(data: TransientEventInput, db: Session = Depen
 
 @app.get("/api/v1/billing/live")
 def get_live_billing(
-    x_device_id: str = Header("default_device", alias="X-Device-ID"),
+    x_device_id: Optional[str] = Header(default="default_device", alias="X-Device-ID"),
     db: Session = Depends(get_db)
 ):
     device_id = normalize_device_id(x_device_id)
