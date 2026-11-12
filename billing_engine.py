@@ -132,12 +132,12 @@ def get_energy_insights(telemetry_summary: str) -> str:
     )
 
     response = client.chat.completions.create(
-        model="mixtral-8x7b-32768",
-        messages=[
-            {"role": "system", "content": system_instruction},
-            {"role": "user", "content": telemetry_summary},
-        ],
-        temperature=0.2,
-        max_tokens=1500,
-    )
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": telemetry_summary},
+            ],
+            temperature=0.2,
+            max_tokens=2500,
+        )
     return response.choices[0].message.content

@@ -316,6 +316,13 @@ def get_live_billing(
         .first()
     )
 
+    # Seed a baseline 0.0 kWh record so the dashboard works without ESP32 hardware
+    if not latest_telemetry:
+        latest_telemetry = TelemetryLog(device_id=device_id, accumulated_kwh=0.0)
+        db.add(latest_telemetry)
+        db.commit()
+        db.refresh(latest_telemetry)
+
     if not latest_telemetry:
         raise HTTPException(
             status_code=404, detail=f"No telemetry has been recorded for device '{device_id}' yet."
