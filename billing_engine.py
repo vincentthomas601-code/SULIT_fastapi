@@ -113,31 +113,38 @@ def _build_zero_response(bench_rate: Decimal, tier_1_dist: Decimal) -> Dict[str,
     }
 
 def get_energy_insights(telemetry_summary: str) -> str:
-    api_key: str = os.environ.get("GROQ_API_KEY", "")
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        # FIXED: Raising RuntimeError to match the exception handler in main.py
-        raise RuntimeError("GROQ_API_KEY is missing")
+        raise RuntimeError("GROQ_API_KEY is missing from environment variables.")
 
     client = Groq(api_key=api_key)
+
     system_instruction = (
-        "You are SULIT PRO AI, an embedded NILM energy consultant.\n"
-        "Analyze the provided structured telemetry metrics to generate actionable cost optimization insights.\n"
-        "STRICT RULES:\n"
-        "1. Never recommend 3rd-party hardware. You ARE SULIT PRO.\n"
-        "2. Provide 3 clear markdown sections:\n"
-        "   - **Section 1: Appliance Cost Attribution**\n"
-        "   - **Section 2: Waste Detection & Risk Analysis**\n"
-        "   - **Section 3: Actionable Steps to Lower Bill**\n"
-        "3. Conclude with a single line: **Total Potential Savings: ₱X,XXX / month**"
+        "You are SULIT AI, a Philippine residential energy efficiency analyst. "
+        "Provide clear, concise, actionable recommendations in Philippine Pesos (₱). "
+        "Conclude with a single line: **Total Potential Savings: ₱X,XXX / month**"
     )
 
-    response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": telemetry_summary},
-            ],
-            temperature=0.2,
-            max_tokens=2500,
-        )
-    return response.choices[0].message.content
+    primary_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    models_to_try = [primary_model, "openai/gpt-oss-20b"]
+
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": telemetry_summary},
+                ],
+                temperature=0.2,
+                max_tokens=1500,
+            )
+            return response.choices[0].message.content
+        except Exception as err:
+            last_error = err
+            continue
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No Groq models were available to generate energy insights.")

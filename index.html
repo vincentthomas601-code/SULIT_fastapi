@@ -580,7 +580,7 @@
       outputDiv.innerText = "⏳ SULIT AI is analyzing your live appliance telemetry and tariff rates...";
       btn.disabled = true;
 
-      const kwh = currentBillingData ? currentBillingData.accumulated_kwh : 0;
+      const kwh = currentBillingData ? (currentBillingData.net_accumulated_kwh ?? currentBillingData.accumulated_kwh ?? 0) : 0;
       const bill = currentBillingData ? currentBillingData.total_bill_php.toFixed(2) : '0.00';
       const rate = currentBillingData ? currentBillingData.effective_rate_per_kwh.toFixed(4) : '0.0000';
       const provider = currentBillingData ? currentBillingData.provider_name : 'Default Provider';
