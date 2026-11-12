@@ -372,13 +372,22 @@
         const data = await res.json();
         currentBillingData = data;
 
-        const kwh = data.accumulated_kwh ?? 0;
+        // FIX 1: Read net_accumulated_kwh (fallback to accumulated_kwh)
+        const kwh = data.net_accumulated_kwh !== undefined ? data.net_accumulated_kwh : (data.accumulated_kwh ?? 0);
+        
+        // FIX 2: Set the dropdown value to match the saved provider in the backend
+        const providerSelect = document.getElementById('provider-select');
+        if (providerSelect && data.provider_code) {
+          providerSelect.value = data.provider_code;
+        }
+
         const totalBill = data.total_bill_php ?? 0;
         const rate = data.effective_rate_per_kwh ?? 0;
         const providerName = data.provider_name || 'Default Provider';
         const region = data.region || 'Luzon Grid';
 
-        document.getElementById('card-kwh').innerHTML = `${kwh} <span class="text-sm font-normal text-slate-400">kWh</span>`;
+        // Update DOM with 2 decimal places for the kWh reading
+        document.getElementById('card-kwh').innerHTML = `${Number(kwh).toFixed(2)} <span class="text-sm font-normal text-slate-400">kWh</span>`;
         document.getElementById('card-bill').innerText = `₱ ${Number(totalBill).toFixed(2)}`;
         document.getElementById('card-rate').innerText = `Rate: ₱${Number(rate).toFixed(4)}/kWh`;
         document.getElementById('card-provider-info').innerText = `${providerName} (${region})`;
