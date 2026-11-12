@@ -1,10 +1,14 @@
 import asyncio
+from contextlib import asynccontextmanager
+from datetime import timedelta, timezone
 import io
 import json
 import logging
 import re
 import time
 from typing import Optional
+
+from apscheduler.schedulers.background import BackgroundScheduler
 import pdfplumber
 from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,12 +29,55 @@ from models import (
 from billing_engine import calculate_ph_electricity_bill, get_energy_insights
 from dsp_features import extract_22d_features
 from ml_engine import classifier
+from scraper import scrape_utility_rates
 
 logger = logging.getLogger(__name__)
 
+PH_TZ = timezone(timedelta(hours=8))
+scheduler = BackgroundScheduler(timezone=PH_TZ)
+
+
+def scheduled_rate_sync():
+    """Runs daily in the background to sync the latest available PRESYO-PH rates."""
+    logger.info("Running scheduled 24-hour PRESYO-PH rate sync...")
+    try:
+        scrape_utility_rates(exit_on_error=False)
+    except Exception as err:
+        logger.error(f"Scheduled PRESYO-PH rate sync failed: {err}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    ensure_database_columns()
+
+    # Initial sync on boot (falls back automatically to latest available rate)
+    try:
+        scrape_utility_rates(exit_on_error=False)
+    except Exception as err:
+        logger.warning(f"Startup PRESYO-PH rate sync skipped: {err}")
+
+    # Schedule daily sync every 24 hours
+    scheduler.add_job(
+        scheduled_rate_sync,
+        trigger="interval",
+        days=1,
+        id="daily_presyo_sync",
+        replace_existing=True,
+    )
+    scheduler.start()
+    logger.info("APScheduler started: PRESYO-PH rate sync scheduled every 24 hours (PH Time).")
+
+    yield
+
+    scheduler.shutdown(wait=False)
+    logger.info("APScheduler shut down cleanly.")
+
+
 app = FastAPI(
     title="Philippine NILM & Smart Billing Backend",
-    version="1.1.0"
+    version="1.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -100,37 +147,37 @@ def ensure_database_columns():
     if engine.name == "sqlite":
         with engine.connect() as conn:
             user_columns = {col[1] for col in conn.execute(text("PRAGMA table_info(user_settings)")).fetchall()}
-            if "device_id" not in user_columns:
-                conn.execute(text("ALTER TABLE user_settings ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
-            if "monthly_budget_php" not in user_columns:
-                conn.execute(text("ALTER TABLE user_settings ADD COLUMN monthly_budget_php FLOAT DEFAULT NULL"))
+            if user_columns:
+                if "device_id" not in user_columns:
+                    conn.execute(text("ALTER TABLE user_settings ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
+                if "monthly_budget_php" not in user_columns:
+                    conn.execute(text("ALTER TABLE user_settings ADD COLUMN monthly_budget_php FLOAT DEFAULT NULL"))
 
             telemetry_columns = {col[1] for col in conn.execute(text("PRAGMA table_info(telemetry_logs)")).fetchall()}
-            if "device_id" not in telemetry_columns:
-                conn.execute(text("ALTER TABLE telemetry_logs ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
+            if telemetry_columns:
+                if "device_id" not in telemetry_columns:
+                    conn.execute(text("ALTER TABLE telemetry_logs ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
 
             conn.commit()
 
     elif engine.name in ["postgresql", "postgres"]:
         with engine.connect() as conn:
-            # Check user_settings table
             user_query = text("SELECT column_name FROM information_schema.columns WHERE table_name = 'user_settings'")
             user_columns = {row[0] for row in conn.execute(user_query).fetchall()}
-            
-            if user_columns: # Only alter if the table already exists
+
+            if user_columns:
                 if "device_id" not in user_columns:
                     conn.execute(text("ALTER TABLE user_settings ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
                 if "monthly_budget_php" not in user_columns:
                     conn.execute(text("ALTER TABLE user_settings ADD COLUMN monthly_budget_php DOUBLE PRECISION DEFAULT NULL"))
-            
-            # Check telemetry_logs table
+
             telemetry_query = text("SELECT column_name FROM information_schema.columns WHERE table_name = 'telemetry_logs'")
             telemetry_columns = {row[0] for row in conn.execute(telemetry_query).fetchall()}
-            
-            if telemetry_columns: # Only alter if the table already exists
+
+            if telemetry_columns:
                 if "device_id" not in telemetry_columns:
                     conn.execute(text("ALTER TABLE telemetry_logs ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
-            
+
             conn.commit()
 
 
@@ -147,12 +194,6 @@ def get_or_create_device_settings(device_id: str, db: Session) -> UserSettings:
         db.commit()
         db.refresh(settings)
     return settings
-
-
-@app.on_event("startup")
-def startup_event():
-    ensure_database_columns()
-    Base.metadata.create_all(bind=engine)
 
 
 @app.get("/")
@@ -211,7 +252,7 @@ async def process_transient_event(data: TransientEventInput, db: Session = Depen
         pf_after=data.pf_after
     )
 
-    if delta_p >= 15.0: 
+    if delta_p >= 15.0:
         appliance_name, confidence = classifier.predict(features_22d)
         event_log = ApplianceEvent(
             device_id=device_id, appliance_name=appliance_name,
@@ -241,8 +282,8 @@ async def process_transient_event(data: TransientEventInput, db: Session = Depen
             return {"status": "SUCCESS", "event": "TURN_OFF", "message": "No matching active session found."}
 
         closest_session = min(active_sessions, key=lambda s: abs(float(s.power_draw_w) - abs_delta))
-        closest_session.is_active = False 
-        
+        closest_session.is_active = False
+
         event_log = ApplianceEvent(
             device_id=device_id, appliance_name=closest_session.appliance_name,
             event_type="TURN_OFF", delta_power_w=delta_p, confidence=1.0
@@ -280,7 +321,6 @@ def get_live_billing(
             status_code=404, detail=f"No telemetry has been recorded for device '{device_id}' yet."
         )
 
-    # Calculate NET kWh based on the billing cycle reset point
     cycle_start = float(settings.cycle_start_kwh) if settings.cycle_start_kwh else 0.0
     net_accumulated_kwh = max(0.0, latest_telemetry.accumulated_kwh - cycle_start)
 
@@ -313,10 +353,10 @@ def get_live_billing(
         latest_rate_entry = (
             db.query(ProviderRate)
             .filter(ProviderRate.provider_code == provider_code)
-            .order_by(ProviderRate.id.desc())
+            .order_by(ProviderRate.billing_month.desc(), ProviderRate.id.desc())
             .first()
         )
-        active_rate = float(latest_rate_entry.benchmark_rate) if latest_rate_entry else 14.50
+        active_rate = float(latest_rate_entry.benchmark_rate) if latest_rate_entry else 15.0615
         rate_status = latest_rate_entry.status if latest_rate_entry else "FALLBACK"
 
         billing_breakdown = calculate_ph_electricity_bill(
@@ -325,7 +365,6 @@ def get_live_billing(
             provider_rule=rule
         )
 
-    # Budget Calculation logic
     budget_metrics = {}
     if settings.monthly_budget_php and settings.monthly_budget_php > 0:
         budget = float(settings.monthly_budget_php)
@@ -368,7 +407,7 @@ def reset_billing_cycle(
     """Resets the billing cycle to zero starting from the current telemetry."""
     device_id = normalize_device_id(x_device_id)
     settings = get_or_create_device_settings(device_id, db)
-    
+
     latest_telemetry = (
         db.query(TelemetryLog)
         .filter(TelemetryLog.device_id == device_id)
@@ -401,6 +440,15 @@ def get_providers(db: Session = Depends(get_db)):
         }
         for p in providers
     ]
+
+
+@app.post("/api/v1/providers/sync")
+def trigger_rate_sync():
+    """Manually triggers a PRESYO-PH rate sync (with automatic fallback to the latest rate)."""
+    try:
+        return scrape_utility_rates(exit_on_error=False)
+    except Exception as err:
+        raise HTTPException(status_code=502, detail=f"PRESYO-PH rate sync failed: {str(err)}")
 
 
 @app.post("/api/v1/settings")
@@ -463,8 +511,8 @@ async def upload_ebill(
         effective_rate = round(total_amount / total_kwh, 4)
 
         settings = get_or_create_device_settings(device_id, db)
-        settings.use_custom_rate = True            
-        settings.custom_rate = effective_rate      
+        settings.use_custom_rate = True
+        settings.custom_rate = effective_rate
         db.commit()
 
         return {
@@ -485,7 +533,7 @@ def generate_insights(payload: InsightRequest, db: Session = Depends(get_db)):
     get_or_create_device_settings(device_id, db)
 
     max_retries = 3
-    base_delay = 2  
+    base_delay = 2
 
     for attempt in range(max_retries):
         try:
@@ -498,19 +546,19 @@ def generate_insights(payload: InsightRequest, db: Session = Depends(get_db)):
                 or (isinstance(status_code, int) and status_code >= 500)
                 or isinstance(e, (TimeoutError, ConnectionError))
             )
-            
+
             if is_transient_error and attempt < max_retries - 1:
                 time.sleep(base_delay * (attempt + 1))
                 continue
 
             logger.exception("AI insight generation failed")
-            
+
             if isinstance(e, RuntimeError) and "GROQ_API_KEY is missing" in str(e):
                 raise HTTPException(
                     status_code=503,
                     detail="AI service is not configured. Set the GROQ_API_KEY environment variable."
                 ) from e
-                
+
             if is_transient_error:
                 raise HTTPException(status_code=503, detail="Groq AI is temporarily unavailable. Please try again shortly.") from e
 

@@ -6,14 +6,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 import requests
 
-PRESYO_API_URL = "https://presyo.icsc.ngo/api/national"
-REQUEST_TIMEOUT_SECONDS = 30
-LOOKBACK_MONTHS = 6 
+PRESYO_API_URL = os.getenv("PRESYO_API_URL", "https://presyo.icsc.ngo/api/national")
+REQUEST_TIMEOUT_SECONDS = int(os.getenv("PRESYO_TIMEOUT", "30"))
+LOOKBACK_MONTHS = int(os.getenv("PRESYO_LOOKBACK_MONTHS", "6"))
 USER_AGENT = "SULIT-PRO-rate-sync/1.0 (+residential rate monitoring)"
 PH_TZ = timezone(timedelta(hours=8))
 
+
 def current_month_ph() -> str:
     return datetime.now(PH_TZ).strftime("%Y-%m")
+
 
 def fetch_month(year: int, month: int) -> Any:
     response = requests.get(
@@ -27,19 +29,24 @@ def fetch_month(year: int, month: int) -> Any:
     response.raise_for_status()
     return response.json()
 
+
 def extract_records(payload: Any) -> List[Dict[str, Any]]:
     if payload is None:
         return []
     if isinstance(payload, list):
         return [r for r in payload if isinstance(r, dict)]
     if isinstance(payload, dict):
-        candidates = [v for v in payload.values() if isinstance(v, list) and v and all(isinstance(i, dict) for i in v)]
+        candidates = [
+            v for v in payload.values()
+            if isinstance(v, list) and v and all(isinstance(i, dict) for i in v)
+        ]
         if len(candidates) == 1:
             return candidates[0]
         if len(candidates) > 1:
             raise RuntimeError("Ambiguous API response.")
         return []
     raise RuntimeError(f"Unexpected API response type: {type(payload).__name__}")
+
 
 def _months_back_from_now():
     now = datetime.now(PH_TZ)
@@ -50,27 +57,56 @@ def _months_back_from_now():
         if month == 0:
             month, year = 12, year - 1
 
+
 def fetch_recent_months() -> List[Tuple[str, List[Dict[str, Any]]]]:
     found = []
     for year, month in _months_back_from_now():
-        records = extract_records(fetch_month(year, month))
-        if records:
-            found.append((f"{year:04d}-{month:02d}", records))
+        try:
+            records = extract_records(fetch_month(year, month))
+            if records:
+                found.append((f"{year:04d}-{month:02d}", records))
+        except Exception:
+            continue
     if not found:
         raise RuntimeError(f"PRESYO-PH returned no records for the last {LOOKBACK_MONTHS} months.")
     return found
 
-def field_map() -> Dict[str, Optional[str]]:
+
+def fetch_latest_available_month() -> Tuple[str, List[Dict[str, Any]]]:
+    """Returns (billing_month, raw_records) for the most recent month published on PRESYO-PH."""
+    for year, month in _months_back_from_now():
+        try:
+            records = extract_records(fetch_month(year, month))
+            if records:
+                return f"{year:04d}-{month:02d}", records
+        except Exception:
+            continue
+    raise RuntimeError(f"PRESYO-PH returned no records for the last {LOOKBACK_MONTHS} months.")
+
+
+def field_map(sample_record: Optional[Dict[str, Any]] = None) -> Dict[str, Optional[str]]:
+    keys = set(sample_record.keys()) if sample_record else set()
+
+    def resolve(env_key: str, candidates: List[str]) -> Optional[str]:
+        env_val = os.getenv(env_key)
+        if env_val:
+            return env_val
+        for candidate in candidates:
+            if candidate in keys:
+                return candidate
+        return None
+
     mapping = {
-        "name": os.getenv("PRESYO_FIELD_NAME"),
-        "rate": os.getenv("PRESYO_FIELD_RATE"),
-        "region": os.getenv("PRESYO_FIELD_REGION") or None,
-        "generation": os.getenv("PRESYO_FIELD_GENERATION") or None,
+        "name": resolve("PRESYO_FIELD_NAME", ["utility", "name", "du_name", "distribution_utility", "code"]),
+        "rate": resolve("PRESYO_FIELD_RATE", ["rate", "residential_rate", "total_rate", "price"]),
+        "region": resolve("PRESYO_FIELD_REGION", ["grid", "region", "grid_classification"]),
+        "generation": resolve("PRESYO_FIELD_GENERATION", ["generation", "generation_rate", "gen_rate"]),
     }
     missing = [k for k in ("name", "rate") if not mapping[k]]
     if missing:
-        raise RuntimeError("Missing environment variables.")
+        raise RuntimeError(f"Missing field mappings for {missing}. Available keys: {sorted(keys)}")
     return mapping
+
 
 def parse_number(value: Any) -> float:
     if value is None or isinstance(value, bool):
@@ -86,12 +122,30 @@ def parse_number(value: Any) -> float:
         raise ValueError("non-finite number")
     return number
 
+
 def slugify(name: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "_", name.upper()).strip("_")
 
+
+def extract_provider_code(name: str, record: Optional[Dict[str, Any]] = None) -> str:
+    """Extracts a clean provider code (e.g. 'MERALCO' from 'Manila Electric Company (MERALCO)')."""
+    if record:
+        explicit = record.get("code") or record.get("acronym")
+        if explicit and str(explicit).strip():
+            return slugify(str(explicit))
+
+    if "MERALCO" in name.upper():
+        return "MERALCO"
+
+    paren_match = re.search(r"\(([A-Za-z0-9\-]+)\)", name)
+    if paren_match:
+        return slugify(paren_match.group(1))
+
+    return slugify(name)[:24]
+
+
 def parse_records(records: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
-    mapping = field_map()
-    sample_keys = sorted(records[0].keys())
+    mapping = field_map(records[0])
     for required in ("name", "rate"):
         if mapping[required] not in records[0]:
             raise RuntimeError(f"Field '{mapping[required]}' not found.")
@@ -106,8 +160,8 @@ def parse_records(records: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], 
                 raise ValueError("empty utility name")
             name = str(raw_name).strip()
             rate = parse_number(record.get(str(mapping["rate"])))
-            if rate <= 0:
-                raise ValueError(f"non-positive rate {rate}")
+            if not (3.0 <= rate <= 35.0):
+                raise ValueError(f"out-of-bounds rate {rate}")
 
             generation = None
             if mapping["generation"]:
@@ -115,16 +169,15 @@ def parse_records(records: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], 
                 if raw_gen not in (None, ""):
                     generation = parse_number(raw_gen)
 
-            region = None
+            region = "Luzon Grid"
             if mapping["region"]:
                 raw_region = record.get(str(mapping["region"]))
-                region = str(raw_region).strip() if raw_region else None
+                if raw_region:
+                    region = str(raw_region).strip()
 
-            code = slugify(name)
+            code = extract_provider_code(name, record)
             if not code:
                 raise ValueError("utility name has no usable characters")
-            if code in utilities:
-                raise RuntimeError(f"Duplicate utility code '{code}'.")
 
             utilities[code] = {
                 "code": code,
@@ -132,6 +185,7 @@ def parse_records(records: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], 
                 "region": region,
                 "rate": rate,
                 "generation_rate": generation,
+                "fee": 0.0,
             }
         except ValueError as err:
             skipped.append(f"{raw_name!r}: {err}")

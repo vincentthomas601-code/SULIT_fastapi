@@ -13,7 +13,7 @@ if not DATABASE_URL:
     if IS_PRODUCTION:
         logger.critical("DATABASE_URL environment variable is missing in production environment!")
         sys.exit(1)
-    DATABASE_URL = "postgresql://thomas:aA2iQkLhPmjXON1d9T2JyWp4Z2opor5P@dpg-dborr2jbc2fs73d1q7s0-a/sulit_db"
+    DATABASE_URL = "sqlite:///./nilm_billing.db"
     logger.warning("No DATABASE_URL set. Falling back to local SQLite database: nilm_billing.db")
 
 if DATABASE_URL.startswith("postgres://"):

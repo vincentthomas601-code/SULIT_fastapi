@@ -1,119 +1,157 @@
 import sys
-import json
 import logging
+import re
 from datetime import datetime
-from typing import Dict, List, Any
-import requests
 from bs4 import BeautifulSoup
+from sqlalchemy.orm import Session
+from playwright.sync_api import sync_playwright
+
 from database import Base, engine, SessionLocal
 from models import ProviderRate, ProviderRule
+from presyo_client import current_month_ph, extract_provider_code
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("ScraperWorker")
 
 PRESYO_NATIONAL_URL = "https://presyo.icsc.ngo/national"
 
-def scrape_all_presyo_utilities() -> List[Dict[str, Any]]:
-    scraped_utilities = []
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+def scrape_presyo_with_browser():
+    """Uses Playwright to render JavaScript and extract the fully loaded table."""
+    utilities = {}
+    published_month = current_month_ph()
 
-    try:
-        response = requests.get(PRESYO_NATIONAL_URL, headers=headers, timeout=15)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-            next_data_tag = soup.find("script", {"id": "__NEXT_DATA__"})
+    with sync_playwright() as p:
+        # headless=True runs the browser silently in the background
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        
+        try:
+            page.goto(PRESYO_NATIONAL_URL, wait_until="networkidle", timeout=30000)
+            # Wait specifically for the data table rows to appear in the DOM
+            page.wait_for_selector("table tbody tr", timeout=15000)
             
-            if next_data_tag and next_data_tag.string:
-                data_json = json.loads(next_data_tag.string)
-                page_props = data_json.get("props", {}).get("pageProps", {})
-                rates_list = page_props.get("rates", []) or page_props.get("utilities", [])
+            html = page.content()
+            soup = BeautifulSoup(html, "html.parser")
+            
+            # Extract the published target month from the period dropdown on the page
+            dropdown = soup.select_one("button[role='combobox']")
+            if dropdown and dropdown.text:
+                try:
+                    published_month = datetime.strptime(dropdown.text.strip(), "%B %Y").strftime("%Y-%m")
+                except ValueError:
+                    pass
+            
+            # Parse the fully rendered HTML table
+            for row in soup.select("table tbody tr"):
+                cells = [c.get_text(" ", strip=True) for c in row.find_all(["td", "th"])]
+                if len(cells) < 4:
+                    continue
+                    
+                du_cell = cells[1]
+                grid_cell = cells[2] or "On-grid"
+                rate_cell = cells[3]
                 
-                for item in rates_list:
-                    try:
-                        raw_rate = item.get("rate") or item.get("residential_rate", 0.0)
-                        
-                        # FIXED: Strip currency symbols, commas, and whitespace before casting
-                        clean_rate_str = str(raw_rate).replace("₱", "").replace("PHP", "").replace(",", "").strip()
-                        rate_val = float(clean_rate_str)
+                rate_match = re.search(r"(\d+\.\d+)", rate_cell.replace(",", ""))
+                if not rate_match:
+                    continue
+                
+                rate_val = float(rate_match.group(1))
+                
+                # Split provider acronym from its full name (e.g. "MERALCO Manila Electric...")
+                acronym_match = re.match(r"^([A-Z0-9\-]+(?:\s+(?:AREA\s*\d+|A\d+|\d+))?)\s+(.+)$", du_cell)
+                raw_code = acronym_match.group(1).strip() if acronym_match else du_cell
+                
+                code = extract_provider_code(raw_code)
+                utilities[code] = {
+                    "code": code,
+                    "name": acronym_match.group(2).strip() if acronym_match else du_cell,
+                    "region": grid_cell,
+                    "rate": rate_val,
+                    "fee": 0.0,
+                }
+                
+        finally:
+            browser.close()
 
-                        # Validate Philippines residential rate bounds (₱5.00 to ₱30.00/kWh)
-                        if not (5.0 <= rate_val <= 30.0):
-                            logger.warning(f"Skipping out-of-bounds rate item: {item}")
-                            continue
+    if not utilities:
+        raise RuntimeError("Browser scraper extracted 0 utilities. The table may be missing or the site structure changed.")
+        
+    logger.info(f"Successfully scraped {len(utilities)} utilities for {published_month}.")
+    return published_month, list(utilities.values())
 
-                        scraped_utilities.append({
-                            "code": (item.get("code") or item.get("acronym") or item.get("utility", "UNKNOWN")[:8]).upper(),
-                            "name": item.get("name") or item.get("utility", "Unknown Utility"),
-                            "region": item.get("grid") or item.get("region", "Luzon Grid"),
-                            "rate": rate_val,
-                            "fee": 0.0
-                        })
-                    except (ValueError, TypeError) as parse_err:
-                        logger.warning(f"Failed to parse item {item}: {parse_err}")
-                        continue
-    except Exception as err:
-        logger.error(f"[PRESYO-PH Scraper] Live scrape failed: {err}")
+def _apply_database_fallback(db: Session, target_month: str):
+    """If the live fetch fails, fallback to the latest stored rate for each provider."""
+    providers = db.query(ProviderRule).all()
+    carried_forward = 0
 
-    if not scraped_utilities:
-        raise RuntimeError("Scraper extracted 0 valid utilities. Scrape failed validation.")
+    for provider in providers:
+        # Find the most recent rate for this specific provider
+        latest_rate = (db.query(ProviderRate)
+            .filter(ProviderRate.provider_code == provider.provider_code)
+            .order_by(ProviderRate.billing_month.desc(), ProviderRate.id.desc())
+            .first())
+        
+        if not latest_rate:
+            continue
 
-    logger.info(f"Successfully validated and scraped {len(scraped_utilities)} utilities.")
-    return scraped_utilities
+        # Only fallback if a rate doesn't already exist for the target month
+        existing = db.query(ProviderRate).filter(
+            ProviderRate.provider_code == provider.provider_code,
+            ProviderRate.billing_month == target_month
+        ).first()
+        
+        if not existing:
+            db.add(ProviderRate(
+                provider_code=provider.provider_code,
+                benchmark_rate=latest_rate.benchmark_rate,
+                billing_month=target_month,
+                status="FALLBACK_LATEST",
+            ))
+        carried_forward += 1
 
-def scrape_utility_rates():
-    logger.info("Executing full PRESYO-PH rate sync job...")
+    db.commit()
+    logger.warning(f"Fallback applied for {carried_forward} providers ({target_month}).")
+
+def scrape_utility_rates(exit_on_error: bool = True):
+    logger.info("Executing Playwright PRESYO-PH sync job...")
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
-    current_month = datetime.now().strftime("%Y-%m")
-
+    
     try:
-        utilities = scrape_all_presyo_utilities()
+        billing_month, utilities = scrape_presyo_with_browser()
+        
+        # Remove any stale fallback rows for this specific month before inserting the real data
+        db.query(ProviderRate).filter(
+            ProviderRate.status == "FALLBACK_LATEST",
+            ProviderRate.billing_month == billing_month
+        ).delete()
 
         for util in utilities:
-            code = util["code"]
-            name = util["name"]
-            region = util["region"]
-            rate = util["rate"]
-            fee = util.get("fee", 0.0)
+            code, name, region, rate = util["code"], util["name"], util["region"], util["rate"]
+            
+            # Create rule if it doesn't exist yet
+            if not db.query(ProviderRule).filter_by(provider_code=code).first():
+                db.add(ProviderRule(provider_code=code, provider_name=name, region=region, base_distribution_fee=0.0))
 
-            rule = db.query(ProviderRule).filter(ProviderRule.provider_code == code).first()
-            if not rule:
-                rule = ProviderRule(
-                    provider_code=code,
-                    provider_name=name,
-                    region=region,
-                    base_distribution_fee=fee
-                )
-                db.add(rule)
-
-            # Upsert ProviderRate entry
-            existing_rate = db.query(ProviderRate).filter(
-                ProviderRate.provider_code == code,
-                ProviderRate.billing_month == current_month
-            ).first()
-
-            if existing_rate:
-                existing_rate.benchmark_rate = rate  # type: ignore
-                existing_rate.status = "SUCCESS"     # type: ignore
+            # Update existing rate or create a new successful row
+            existing = db.query(ProviderRate).filter_by(provider_code=code, billing_month=billing_month).first()
+            if existing:
+                existing.benchmark_rate = rate
+                existing.status = "SUCCESS"
             else:
-                rate_entry = ProviderRate(
-                    provider_code=code,
-                    benchmark_rate=rate,
-                    billing_month=current_month,
-                    status="SUCCESS"
-                )
-                db.add(rate_entry)
+                db.add(ProviderRate(provider_code=code, benchmark_rate=rate, billing_month=billing_month, status="SUCCESS"))
 
         db.commit()
-        logger.info(f"Database successfully synchronized with {len(utilities)} PRESYO rates.")
+        logger.info(f"Database synced with PRESYO rates for {billing_month}.")
+        
     except Exception as err:
-        logger.critical(f"Fatal error during PRESYO-PH sync: {err}")
+        logger.error(f"Live fetch failed: {err}")
         db.rollback()
-        sys.exit(1)
+        _apply_database_fallback(db, current_month_ph())
+        if exit_on_error:
+            sys.exit(1)
     finally:
         db.close()
 
 if __name__ == "__main__":
-    scrape_utility_rates()
+    scrape_utility_rates(exit_on_error=True)
