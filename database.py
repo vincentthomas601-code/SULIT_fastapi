@@ -13,14 +13,11 @@ if not DATABASE_URL:
     if IS_PRODUCTION:
         logger.critical("DATABASE_URL environment variable is missing in production environment!")
         sys.exit(1)
-    DATABASE_URL = "sqlite:///./nilm_billing.db"
+    DATABASE_URL = "postgresql://thomas:aA2iQkLhPmjXON1d9T2JyWp4Z2opor5P@dpg-dborr2jbc2fs73d1q7s0-a/sulit_db"
     logger.warning("No DATABASE_URL set. Falling back to local SQLite database: nilm_billing.db")
 
-# Convert postgres:// or postgresql:// to postgresql+psycopg2://
 if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
-elif DATABASE_URL.startswith("postgresql://") and not DATABASE_URL.startswith("postgresql+psycopg2://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
@@ -31,11 +28,13 @@ try:
         pool_pre_ping=True,
         pool_recycle=1800 if not DATABASE_URL.startswith("sqlite") else -1
     )
+    # Test DB Connection
     with engine.connect() as conn:
         pass
 except Exception as err:
     logger.critical(f"Fatal error connecting to database at {DATABASE_URL}: {err}")
-    sys.exit(1)
+    if IS_PRODUCTION or not DATABASE_URL.startswith("sqlite"):
+        sys.exit(1)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

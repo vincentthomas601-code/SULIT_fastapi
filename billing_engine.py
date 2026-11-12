@@ -6,6 +6,21 @@ from groq import Groq
 
 logger = logging.getLogger("BillingEngine")
 
+# Environment-configurable billing bounds (removing hardcoded Philippine tax numbers)
+LIFELINE_TIER_1 = Decimal(os.getenv("LIFELINE_TIER_1_MAX", "50.0"))
+LIFELINE_TIER_1_PCT = Decimal(os.getenv("LIFELINE_TIER_1_PCT", "1.00"))
+LIFELINE_TIER_2 = Decimal(os.getenv("LIFELINE_TIER_2_MAX", "70.0"))
+LIFELINE_TIER_2_PCT = Decimal(os.getenv("LIFELINE_TIER_2_PCT", "0.35"))
+LIFELINE_TIER_3 = Decimal(os.getenv("LIFELINE_TIER_3_MAX", "100.0"))
+LIFELINE_TIER_3_PCT = Decimal(os.getenv("LIFELINE_TIER_3_PCT", "0.20"))
+
+TAX_TIER_1_START = Decimal(os.getenv("TAX_TIER_1_START", "650.0"))
+TAX_TIER_1_PCT = Decimal(os.getenv("TAX_TIER_1_PCT", "0.10"))
+TAX_TIER_2_START = Decimal(os.getenv("TAX_TIER_2_START", "1000.0"))
+TAX_TIER_2_PCT = Decimal(os.getenv("TAX_TIER_2_PCT", "0.20"))
+TAX_TIER_3_START = Decimal(os.getenv("TAX_TIER_3_START", "1500.0"))
+TAX_TIER_3_PCT = Decimal(os.getenv("TAX_TIER_3_PCT", "0.35"))
+
 def _to_decimal(val: float) -> Decimal:
     return Decimal(str(val))
 
@@ -14,29 +29,12 @@ def calculate_ph_electricity_bill(
     benchmark_rate: float,
     provider_rule: Any
 ) -> Dict[str, Any]:
-    """
-    Calculates unbundled Philippine residential bill using exact Decimal arithmetic.
-    Accurately attributes Lifeline Discounts and BP Blg. 36 Energy Tax.
-    """
     kwh = max(Decimal("0.0"), _to_decimal(net_cycle_kwh))
     bench_rate = _to_decimal(benchmark_rate)
     tier_1_dist = _to_decimal(provider_rule.tier_1_rate)
 
     if kwh <= Decimal("0.0"):
-        return {
-            "accumulated_kwh": 0.0,
-            "benchmark_rate": float(bench_rate),
-            "implied_variable_rate": float(max(Decimal("0.0"), bench_rate - tier_1_dist)),
-            "applied_distribution_rate": float(tier_1_dist),
-            "variable_charge_php": 0.0,
-            "distribution_charge_php": 0.0,
-            "pre_discount_subtotal_php": 0.0,
-            "lifeline_discount_percentage": 0.0,
-            "lifeline_discount_php": 0.0,
-            "energy_tax_php": 0.0,
-            "total_bill_php": 0.0,
-            "effective_rate_per_kwh": float(bench_rate)
-        }
+        return _build_zero_response(bench_rate, tier_1_dist)
 
     implied_variable_rate = max(Decimal("0.0"), bench_rate - tier_1_dist)
 
@@ -53,40 +51,39 @@ def calculate_ph_electricity_bill(
     distribution_charge = kwh * applied_dist_rate
     pre_discount_subtotal = variable_charge + distribution_charge
 
-    # ERC Lifeline Discount Matrix
+    # Dynamic Lifeline Discount Matrix
     lifeline_pct = Decimal("0.00")
-    if kwh <= Decimal("50.0"):
-        lifeline_pct = Decimal("1.00")
-    elif kwh <= Decimal("70.0"):
-        lifeline_pct = Decimal("0.35")
-    elif kwh <= Decimal("100.0"):
-        lifeline_pct = Decimal("0.20")
+    if kwh <= LIFELINE_TIER_1:
+        lifeline_pct = LIFELINE_TIER_1_PCT
+    elif kwh <= LIFELINE_TIER_2:
+        lifeline_pct = LIFELINE_TIER_2_PCT
+    elif kwh <= LIFELINE_TIER_3:
+        lifeline_pct = LIFELINE_TIER_3_PCT
 
     lifeline_discount_php = pre_discount_subtotal * lifeline_pct
     discounted_subtotal = pre_discount_subtotal - lifeline_discount_php
 
-    # Energy Tax (Batas Pambansa Blg. 36)
+    # Dynamic Energy Tax
     effective_base_rate = discounted_subtotal / kwh
     energy_tax_php = Decimal("0.00")
 
-    if kwh > Decimal("650.0"):
-        excess_a = min(kwh, Decimal("1000.0")) - Decimal("650.0")
-        energy_tax_php += excess_a * effective_base_rate * Decimal("0.10")
+    if kwh > TAX_TIER_1_START:
+        excess_a = min(kwh, TAX_TIER_2_START) - TAX_TIER_1_START
+        energy_tax_php += excess_a * effective_base_rate * TAX_TIER_1_PCT
 
-    if kwh > Decimal("1000.0"):
-        excess_b = min(kwh, Decimal("1500.0")) - Decimal("1000.0")
-        energy_tax_php += excess_b * effective_base_rate * Decimal("0.20")
+    if kwh > TAX_TIER_2_START:
+        excess_b = min(kwh, TAX_TIER_3_START) - TAX_TIER_2_START
+        energy_tax_php += excess_b * effective_base_rate * TAX_TIER_2_PCT
 
-    if kwh > Decimal("1500.0"):
-        excess_c = kwh - Decimal("1500.0")
-        energy_tax_php += excess_c * effective_base_rate * Decimal("0.35")
+    if kwh > TAX_TIER_3_START:
+        excess_c = kwh - TAX_TIER_3_START
+        energy_tax_php += excess_c * effective_base_rate * TAX_TIER_3_PCT
 
     total_bill_php = discounted_subtotal + energy_tax_php
     effective_rate = total_bill_php / kwh
 
     def _r2(d: Decimal) -> float:
         return float(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
-
     def _r4(d: Decimal) -> float:
         return float(d.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
 
@@ -105,13 +102,23 @@ def calculate_ph_electricity_bill(
         "effective_rate_per_kwh": _r4(effective_rate)
     }
 
+def _build_zero_response(bench_rate: Decimal, tier_1_dist: Decimal) -> Dict[str, Any]:
+    return {
+        "accumulated_kwh": 0.0, "benchmark_rate": float(bench_rate),
+        "implied_variable_rate": float(max(Decimal("0.0"), bench_rate - tier_1_dist)),
+        "applied_distribution_rate": float(tier_1_dist), "variable_charge_php": 0.0,
+        "distribution_charge_php": 0.0, "pre_discount_subtotal_php": 0.0,
+        "lifeline_discount_percentage": 0.0, "lifeline_discount_php": 0.0,
+        "energy_tax_php": 0.0, "total_bill_php": 0.0, "effective_rate_per_kwh": float(bench_rate)
+    }
+
 def get_energy_insights(telemetry_summary: str) -> str:
-    api_key = os.environ.get("GROQ_API_KEY")
+    api_key: str = os.environ.get("GROQ_API_KEY", "")
     if not api_key:
-        raise ValueError("GROQ_API_KEY environment variable is missing on server.")
+        # FIXED: Raising RuntimeError to match the exception handler in main.py
+        raise RuntimeError("GROQ_API_KEY is missing")
 
     client = Groq(api_key=api_key)
-
     system_instruction = (
         "You are SULIT PRO AI, an embedded NILM energy consultant.\n"
         "Analyze the provided structured telemetry metrics to generate actionable cost optimization insights.\n"

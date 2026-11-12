@@ -95,8 +95,8 @@ def scrape_utility_rates():
             ).first()
 
             if existing_rate:
-                existing_rate.benchmark_rate = rate
-                existing_rate.status = "SUCCESS"
+                existing_rate.benchmark_rate = rate  # type: ignore
+                existing_rate.status = "SUCCESS"     # type: ignore
             else:
                 rate_entry = ProviderRate(
                     provider_code=code,

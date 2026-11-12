@@ -5,7 +5,6 @@ from database import Base
 class Device(Base):
     """Stores device registration and security tokens."""
     __tablename__ = "devices"
-
     id = Column(Integer, primary_key=True, index=True)
     device_id = Column(String, unique=True, index=True, nullable=False)
     api_token = Column(String, nullable=False)
@@ -14,13 +13,11 @@ class Device(Base):
 class ProviderRule(Base):
     """Stores ERC-approved distribution tier matrices and base distribution fees."""
     __tablename__ = "provider_rules"
-
     id = Column(Integer, primary_key=True, index=True)
     provider_code = Column(String, unique=True, index=True, nullable=False)
     provider_name = Column(String, nullable=False)
     region = Column(String, nullable=False)
     base_distribution_fee = Column(Float, default=0.9803)
-
     tier_1_max_kwh = Column(Float, default=200.0)
     tier_1_rate = Column(Float, default=0.9803)
     tier_2_max_kwh = Column(Float, default=300.0)
@@ -35,7 +32,6 @@ class ProviderRate(Base):
     __table_args__ = (
         UniqueConstraint('provider_code', 'billing_month', name='uix_provider_month'),
     )
-
     id = Column(Integer, primary_key=True, index=True)
     provider_code = Column(String, index=True, nullable=False)
     benchmark_rate = Column(Float, nullable=False)
@@ -45,13 +41,13 @@ class ProviderRate(Base):
 
 class UserSettings(Base):
     __tablename__ = "user_settings"
-
     id = Column(Integer, primary_key=True, index=True)
     device_id = Column(String, unique=True, index=True, nullable=False)
     selected_provider = Column(String, default="MERALCO")
     use_custom_rate = Column(Boolean, default=False)
     custom_rate = Column(Float, nullable=True)
-    cycle_start_kwh = Column(Float, default=0.0)  # Stores baseline reading for monthly bill resetting
+    cycle_start_kwh = Column(Float, default=0.0)  
+    monthly_budget_php = Column(Float, nullable=True)  # NEW: Tracks target budget
 
 class TelemetryLog(Base):
     """Time-series logs sent from ESP32 / PZEM-004T."""
@@ -59,7 +55,6 @@ class TelemetryLog(Base):
     __table_args__ = (
         Index('idx_telemetry_device_time', 'device_id', 'timestamp'),
     )
-
     id = Column(Integer, primary_key=True, index=True)
     device_id = Column(String, index=True, nullable=False)
     accumulated_kwh = Column(Float, nullable=False)
@@ -71,7 +66,6 @@ class ApplianceEvent(Base):
     __table_args__ = (
         Index('idx_events_device_time', 'device_id', 'timestamp'),
     )
-
     id = Column(Integer, primary_key=True, index=True)
     device_id = Column(String, index=True, nullable=False)
     appliance_name = Column(String, nullable=False)
@@ -83,7 +77,6 @@ class ApplianceEvent(Base):
 class ActiveApplianceSession(Base):
     """Tracks currently active appliances per device for per-appliance cost attribution."""
     __tablename__ = "active_appliance_sessions"
-
     id = Column(Integer, primary_key=True, index=True)
     device_id = Column(String, index=True, nullable=False)
     appliance_name = Column(String, nullable=False)
