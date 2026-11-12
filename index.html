@@ -66,13 +66,31 @@
         </div>
       </div>
 
-      <!-- Card 2: Live kWh Consumed -->
+      <!-- Card 2: Cycle Energy Usage (Budget Tracker) -->
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
-        <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Accumulated Usage</span>
-        <div class="text-3xl font-extrabold text-white mt-2" id="card-kwh">0.00 <span class="text-sm font-normal text-slate-400">kWh</span></div>
-        <div class="flex justify-between items-center text-xs text-slate-400 mt-3 pt-2 border-t border-slate-800/80">
-          <span>PZEM-004T Metering</span>
-          <span class="text-sky-400 font-medium">Real-Time</span>
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-[11px] font-semibold text-sky-400 uppercase tracking-wider flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            Cycle Energy Usage
+          </span>
+          <span class="px-2 py-0.5 text-[10px] rounded border border-sky-500/30 text-sky-400 bg-sky-500/10">PZEM-004T</span>
+        </div>
+        
+        <div class="text-3xl font-extrabold text-white mt-1" id="card-kwh">0.00 <span class="text-sm font-normal text-slate-400">kWh</span></div>
+        
+        <!-- Progress Bar -->
+        <div class="w-full bg-slate-800 rounded-full h-1.5 mt-4 mb-3">
+          <div id="budget-progress-bar" class="bg-sky-500 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+        </div>
+
+        <div class="flex justify-between items-center text-xs text-slate-400 mb-4">
+          <span id="budget-status-text">Awaiting meter reading</span>
+          <span id="budget-target-display">₱3,500 Budget</span>
+        </div>
+
+        <div class="flex justify-between items-center text-xs text-slate-400 pt-3 border-t border-slate-800/80">
+          <span>Meter Total</span>
+          <span class="font-mono text-slate-300" id="meter-total-kwh">0.00 kWh</span>
         </div>
       </div>
 
@@ -228,6 +246,18 @@
           <input type="file" id="pdf-upload" accept="application/pdf" class="block w-full text-xs text-slate-400 file:mr-4 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 cursor-pointer">
           <button onclick="uploadPdf()" class="mt-2.5 w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-1.5 rounded-lg text-xs font-semibold transition border border-slate-700">Process PDF & Set Rate</button>
           <div id="upload-status" class="text-[10px] mt-1.5 text-slate-400"></div>
+        </div>
+
+        <!-- Monthly Budget Target -->
+        <div class="pt-4 border-t border-slate-800 mt-2">
+          <label class="block text-[10px] text-emerald-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            Monthly Budget Target (₱)
+          </label>
+          <div class="flex space-x-2">
+            <input type="number" id="budget-input" placeholder="3500" class="flex-1 bg-slate-950 border border-amber-500/50 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500">
+            <button onclick="saveBudget()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-1.5 rounded-lg text-xs font-semibold transition border border-slate-700">Set</button>
+          </div>
         </div>
 
       </div>
@@ -392,6 +422,38 @@
         document.getElementById('card-rate').innerText = `Rate: ₱${Number(rate).toFixed(4)}/kWh`;
         document.getElementById('card-provider-info').innerText = `${providerName} (${region})`;
 
+        // --- NEW BUDGET TRACKING LOGIC ---
+        const savedBudget = parseFloat(localStorage.getItem(`sulit_budget_${getDeviceId()}`)) || 3500;
+        document.getElementById('budget-input').value = savedBudget;
+        
+        let budgetPct = (totalBill / savedBudget) * 100;
+        const boundedPct = Math.min(budgetPct, 100); // Cap visual bar at 100%
+        
+        const progressBar = document.getElementById('budget-progress-bar');
+        progressBar.style.width = `${boundedPct}%`;
+        document.getElementById('budget-target-display').innerText = `₱${savedBudget.toLocaleString()} Budget`;
+        document.getElementById('meter-total-kwh').innerText = `${Number(kwh).toFixed(2)} kWh`;
+
+        const statusText = document.getElementById('budget-status-text');
+        if (totalBill === 0) {
+          statusText.innerText = "Awaiting meter reading";
+          progressBar.classList.remove('bg-rose-500');
+          progressBar.classList.add('bg-sky-500');
+          statusText.classList.remove('text-rose-400');
+        } else {
+          statusText.innerText = `${budgetPct.toFixed(1)}% of Budget Used`;
+          if (budgetPct >= 100) {
+            progressBar.classList.remove('bg-sky-500');
+            progressBar.classList.add('bg-rose-500');
+            statusText.classList.add('text-rose-400');
+          } else {
+            progressBar.classList.remove('bg-rose-500');
+            progressBar.classList.add('bg-sky-500');
+            statusText.classList.remove('text-rose-400');
+          }
+        }
+        // ---------------------------------
+
         const badge = document.getElementById('rate-badge');
         badge.innerText = `STATUS: ${data.rate_status || 'OK'}`;
 
@@ -532,6 +594,14 @@
       fetchLiveBilling();
     }
 
+    function saveBudget() {
+      const budgetVal = parseFloat(document.getElementById('budget-input').value);
+      if (isNaN(budgetVal) || budgetVal <= 0) return alert('Please enter a valid budget amount.');
+      
+      localStorage.setItem(`sulit_budget_${getDeviceId()}`, budgetVal);
+      refreshAllDashboardData(); // Instantly update the progress bar
+    }
+
     async function saveCustomRate() {
       const val = parseFloat(document.getElementById('custom-rate-input').value);
       if (isNaN(val) || val <= 0) return alert('Please enter a valid rate.');
@@ -580,6 +650,7 @@
       outputDiv.innerText = "⏳ SULIT AI is analyzing your live appliance telemetry and tariff rates...";
       btn.disabled = true;
 
+      // Fix applied here to utilize the net_accumulated_kwh field for the AI payload
       const kwh = currentBillingData ? (currentBillingData.net_accumulated_kwh ?? currentBillingData.accumulated_kwh ?? 0) : 0;
       const bill = currentBillingData ? currentBillingData.total_bill_php.toFixed(2) : '0.00';
       const rate = currentBillingData ? currentBillingData.effective_rate_per_kwh.toFixed(4) : '0.0000';
