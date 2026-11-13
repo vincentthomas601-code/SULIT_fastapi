@@ -242,22 +242,28 @@ def ingest_telemetry(data: TelemetryInput, background_tasks: BackgroundTasks, db
 @app.post("/api/v1/events/transient", dependencies=[Depends(verify_api_key)])
 def process_transient_event(data: TransientEventInput, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     device_id = normalize_device_id(data.device_id)
-    delta_p = data.p_after - data.p_before
+    delta_p = float(data.p_after - data.p_before)
 
     if delta_p >= 15.0:
-        features_22d = extract_22d_features(
-            raw_samples=data.raw_samples, p_before=data.p_before, p_after=data.p_after,
-            pf_before=data.pf_before, pf_after=data.pf_after
-        )
+        try:
+            features_22d = extract_22d_features(
+                raw_samples=data.raw_samples, p_before=data.p_before, p_after=data.p_after,
+                pf_before=data.pf_before, pf_after=data.pf_after
+            )
+            raw_name, raw_conf = classifier.predict(features_22d)
+            appliance_name = str(raw_name)
+            confidence = float(raw_conf)
+        except Exception as exc:
+            logger.exception("NILM inference failed during TURN_ON")
+            raise HTTPException(status_code=500, detail=f"NILM inference error: {type(exc).__name__}: {exc}")
 
-        appliance_name, confidence = classifier.predict(features_22d)
         event_log = ApplianceEvent(
             device_id=device_id, appliance_name=appliance_name,
-            event_type="TURN_ON", delta_power_w=delta_p, confidence=confidence
+            event_type="TURN_ON", delta_power_w=float(delta_p), confidence=float(confidence)
         )
         session_entry = ActiveApplianceSession(
             device_id=device_id, appliance_name=appliance_name,
-            power_draw_w=delta_p, is_active=True
+            power_draw_w=float(delta_p), is_active=True
         )
         db.add_all([event_log, session_entry])
         db.commit()
@@ -267,10 +273,41 @@ def process_transient_event(data: TransientEventInput, background_tasks: Backgro
             {
                 "type": "TRANSIENT_DETECTED", "device_id": device_id,
                 "event_type": "TURN_ON", "appliance_name": appliance_name,
-                "delta_power_w": round(delta_p, 2), "confidence": confidence
+                "delta_power_w": round(float(delta_p), 2), "confidence": round(float(confidence), 4)
             }
         )
-        return {"status": "SUCCESS", "event": "TURN_ON", "appliance": appliance_name, "delta_power_w": round(delta_p, 2)}
+        return {"status": "SUCCESS", "event": "TURN_ON", "appliance": appliance_name, "delta_power_w": round(float(delta_p), 2)}
+
+    elif delta_p <= -15.0:
+        abs_delta = abs(delta_p)
+        active_sessions = db.query(ActiveApplianceSession).filter(
+            ActiveApplianceSession.device_id == device_id, ActiveApplianceSession.is_active == True
+        ).all()
+
+        if not active_sessions:
+            return {"status": "SUCCESS", "event": "TURN_OFF", "message": "No matching active session found."}
+
+        closest_session = min(active_sessions, key=lambda s: abs(float(s.power_draw_w) - abs_delta))
+        closest_session.is_active = False
+
+        event_log = ApplianceEvent(
+            device_id=device_id, appliance_name=closest_session.appliance_name,
+            event_type="TURN_OFF", delta_power_w=float(delta_p), confidence=1.0
+        )
+        db.add(event_log)
+        db.commit()
+
+        background_tasks.add_task(
+            broadcaster.broadcast,
+            {
+                "type": "TRANSIENT_DETECTED", "device_id": device_id,
+                "event_type": "TURN_OFF", "appliance_name": closest_session.appliance_name,
+                "delta_power_w": round(float(delta_p), 2), "confidence": None
+            }
+        )
+        return {"status": "SUCCESS", "event": "TURN_OFF", "appliance": closest_session.appliance_name, "delta_power_w": round(float(delta_p), 2)}
+
+    return {"status": "IGNORED", "message": "Power step below threshold."}"delta_power_w": round(delta_p, 2)}
 
     elif delta_p <= -15.0:
         abs_delta = abs(delta_p)
