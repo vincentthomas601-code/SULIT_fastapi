@@ -35,19 +35,18 @@ def scrape_utility_rates(exit_on_error: bool = True) -> dict:
 
             provider = db.query(ProviderRule).filter(ProviderRule.provider_code == code).first()
             if not provider:
-                is_meralco = code == "MERALCO"
                 provider = ProviderRule(
                     provider_code=code,
                     provider_name=name,
                     region=region,
-                    base_distribution_fee=0.9803 if is_meralco else 0.0,
+                    base_distribution_fee=0.9803,
                     tier_1_max_kwh=200.0,
-                    tier_1_rate=0.9803 if is_meralco else 0.0,
+                    tier_1_rate=0.9803,
                     tier_2_max_kwh=300.0,
-                    tier_2_rate=1.2908 if is_meralco else 0.0,
+                    tier_2_rate=1.2908,
                     tier_3_max_kwh=400.0,
-                    tier_3_rate=1.5837 if is_meralco else 0.0,
-                    tier_4_rate=2.0941 if is_meralco else 0.0,
+                    tier_3_rate=1.5837,
+                    tier_4_rate=2.0941,
                 )
                 db.add(provider)
                 db.flush()
