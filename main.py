@@ -257,16 +257,21 @@ def process_transient_event(data: TransientEventInput, background_tasks: Backgro
             logger.exception("NILM inference failed during TURN_ON")
             raise HTTPException(status_code=500, detail=f"NILM inference error: {type(exc).__name__}: {exc}")
 
-        event_log = ApplianceEvent(
-            device_id=device_id, appliance_name=appliance_name,
-            event_type="TURN_ON", delta_power_w=float(delta_p), confidence=float(confidence)
-        )
-        session_entry = ActiveApplianceSession(
-            device_id=device_id, appliance_name=appliance_name,
-            power_draw_w=float(delta_p), is_active=True
-        )
-        db.add_all([event_log, session_entry])
-        db.commit()
+        try:
+            event_log = ApplianceEvent(
+                device_id=device_id, appliance_name=appliance_name,
+                event_type="TURN_ON", delta_power_w=float(delta_p), confidence=float(confidence)
+            )
+            session_entry = ActiveApplianceSession(
+                device_id=device_id, appliance_name=appliance_name,
+                power_draw_w=float(delta_p), is_active=True
+            )
+            db.add_all([event_log, session_entry])
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.exception("Database commit failed during TURN_ON")
+            raise HTTPException(status_code=500, detail=f"Database error: {type(exc).__name__}: {exc}")
 
         background_tasks.add_task(
             broadcaster.broadcast,
@@ -306,38 +311,6 @@ def process_transient_event(data: TransientEventInput, background_tasks: Backgro
             }
         )
         return {"status": "SUCCESS", "event": "TURN_OFF", "appliance": closest_session.appliance_name, "delta_power_w": round(float(delta_p), 2)}
-
-    return {"status": "IGNORED", "message": "Power step below threshold."}"delta_power_w": round(delta_p, 2)}
-
-    elif delta_p <= -15.0:
-        abs_delta = abs(delta_p)
-        active_sessions = db.query(ActiveApplianceSession).filter(
-            ActiveApplianceSession.device_id == device_id, ActiveApplianceSession.is_active == True
-        ).all()
-
-        if not active_sessions:
-            return {"status": "SUCCESS", "event": "TURN_OFF", "message": "No matching active session found."}
-
-        closest_session = min(active_sessions, key=lambda s: abs(float(s.power_draw_w) - abs_delta))
-        closest_session.is_active = False
-
-        # FIXED: ApplianceEvent.confidence is NOT NULL in models.py
-        event_log = ApplianceEvent(
-            device_id=device_id, appliance_name=closest_session.appliance_name,
-            event_type="TURN_OFF", delta_power_w=delta_p, confidence=1.0
-        )
-        db.add(event_log)
-        db.commit()
-
-        background_tasks.add_task(
-            broadcaster.broadcast,
-            {
-                "type": "TRANSIENT_DETECTED", "device_id": device_id,
-                "event_type": "TURN_OFF", "appliance_name": closest_session.appliance_name,
-                "delta_power_w": round(delta_p, 2), "confidence": None
-            }
-        )
-        return {"status": "SUCCESS", "event": "TURN_OFF", "appliance": closest_session.appliance_name, "delta_power_w": round(delta_p, 2)}
 
     return {"status": "IGNORED", "message": "Power step below threshold."}
 
