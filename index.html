@@ -305,8 +305,8 @@
   </div>
 
   <script>
-    // SECURITY FIX: Defined API Key to match backend requirement
-    const API_KEY = "change_this_to_a_secure_random_string_in_production"; 
+    // SECURITY FIX: Synced API Key with Render environment variable
+    const API_KEY = "45d493d8331c0421d94f69359305e467";
 
     function getDeviceId() {
       let deviceId = localStorage.getItem('sulit_device_id');
@@ -321,7 +321,7 @@
     function getAuthHeaders(additionalHeaders = {}) {
       return {
         'X-Device-ID': getDeviceId(),
-        'X-API-Key': API_KEY, // SECURITY FIX: Added auth header
+        'X-API-Key': API_KEY,
         ...additionalHeaders
       };
     }
@@ -367,7 +367,6 @@
 
     // Connect Server-Sent Events (SSE)
     function initSSE() {
-      // SECURITY FIX: SSE now scopes by device_id and authenticates via token query parameter
       const evtSource = new EventSource(`/api/v1/events/stream?device_id=${encodeURIComponent(getDeviceId())}&token=${encodeURIComponent(API_KEY)}`);
 
       evtSource.onopen = function() {
@@ -377,8 +376,7 @@
       evtSource.onmessage = function(event) {
         try {
           const payload = JSON.parse(event.data);
-          // Ignore heartbeat pulses
-          if (payload.type === 'HEARTBEAT') return; 
+          if (payload.type === 'HEARTBEAT') return;
 
           console.log('[SSE] Broadcast received:', payload);
           if (payload.type === 'TRANSIENT_DETECTED' || payload.type === 'TELEMETRY_UPDATED') {
@@ -644,8 +642,6 @@
       outputDiv.innerText = "⏳ SULIT AI is analyzing your live appliance telemetry and tariff rates...";
       btn.disabled = true;
 
-      // SECURITY FIX: Removed prompt_text from the payload. 
-      // The prompt is now securely generated on the backend to prevent the app from being used as a free LLM proxy.
       const payloadData = {
         device_id: getDeviceId()
       };
@@ -665,7 +661,7 @@
             .replace(/\n?```$/i, '')
             .trim();
 
-          // SECURITY FIX: DOMPurify sanitizes the markdown output to prevent XSS attacks[cite: 22]
+          // SECURITY FIX: DOMPurify sanitizes the markdown output to prevent XSS attacks
           const rawHtml = marked.parse(cleanMarkdown);
           const safeHtml = DOMPurify.sanitize(rawHtml);
           outputDiv.innerHTML = safeHtml;
