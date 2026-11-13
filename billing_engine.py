@@ -6,8 +6,10 @@ from groq import Groq
 
 logger = logging.getLogger("BillingEngine")
 
+
 def _to_decimal(val: float) -> Decimal:
     return Decimal(str(val))
+
 
 def calculate_ph_electricity_bill(
     net_cycle_kwh: float,
@@ -36,7 +38,7 @@ def calculate_ph_electricity_bill(
     distribution_charge = kwh * applied_dist_rate
     pre_discount_subtotal = variable_charge + distribution_charge
 
-    # Dynamic Lifeline Discount Matrix (Untouched)
+    # Dynamic Lifeline Discount Matrix
     lifeline_pct = Decimal("0.00")
     if kwh <= Decimal("20.0"):
         lifeline_pct = Decimal("1.00")
@@ -50,7 +52,7 @@ def calculate_ph_electricity_bill(
     lifeline_discount_php = pre_discount_subtotal * lifeline_pct
     discounted_subtotal = pre_discount_subtotal - lifeline_discount_php
 
-    # Dynamic Energy Tax (Untouched)
+    # Dynamic Energy Tax
     effective_base_rate = discounted_subtotal / kwh
     energy_tax_php = Decimal("0.00")
 
@@ -69,6 +71,7 @@ def calculate_ph_electricity_bill(
 
     def _r2(d: Decimal) -> float:
         return float(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
     def _r4(d: Decimal) -> float:
         return float(d.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
 
@@ -87,15 +90,23 @@ def calculate_ph_electricity_bill(
         "effective_rate_per_kwh": _r4(effective_rate)
     }
 
+
 def _build_zero_response(bench_rate: Decimal, tier_1_dist: Decimal) -> Dict[str, Any]:
     return {
-        "accumulated_kwh": 0.0, "benchmark_rate": float(bench_rate),
+        "accumulated_kwh": 0.0,
+        "benchmark_rate": float(bench_rate),
         "implied_variable_rate": float(max(Decimal("0.0"), bench_rate - tier_1_dist)),
-        "applied_distribution_rate": float(tier_1_dist), "variable_charge_php": 0.0,
-        "distribution_charge_php": 0.0, "pre_discount_subtotal_php": 0.0,
-        "lifeline_discount_percentage": 0.0, "lifeline_discount_php": 0.0,
-        "energy_tax_php": 0.0, "total_bill_php": 0.0, "effective_rate_per_kwh": float(bench_rate)
+        "applied_distribution_rate": float(tier_1_dist),
+        "variable_charge_php": 0.0,
+        "distribution_charge_php": 0.0,
+        "pre_discount_subtotal_php": 0.0,
+        "lifeline_discount_percentage": 0.0,
+        "lifeline_discount_php": 0.0,
+        "energy_tax_php": 0.0,
+        "total_bill_php": 0.0,
+        "effective_rate_per_kwh": float(bench_rate)
     }
+
 
 def get_energy_insights(telemetry_summary: str) -> str:
     api_key = os.getenv("GROQ_API_KEY")
@@ -104,15 +115,15 @@ def get_energy_insights(telemetry_summary: str) -> str:
 
     client = Groq(api_key=api_key)
 
-    # FIXED: Safe, grounded instruction that prevents AI hallucinations
     system_instruction = (
         "You are SULIT AI, a Philippine residential energy efficiency analyst. "
         "Provide clear, concise, actionable recommendations in Philippine Pesos (₱) based ONLY on the provided usage data. "
         "Do not invent or estimate total potential savings unless calculable directly from the provided data."
     )
 
-    primary_model = os.getenv("GROQ_MODEL", "llama3-70b-8192")
-    models_to_try = [primary_model, "mixtral-8x7b-32768"]
+    # Groq flagship production model (GPT-OSS 120B) with GPT-OSS 20B fallback
+    primary_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    models_to_try = list(dict.fromkeys([primary_model, "openai/gpt-oss-120b", "openai/gpt-oss-20b"]))
 
     last_error = None
     for model_name in models_to_try:
@@ -126,8 +137,12 @@ def get_energy_insights(telemetry_summary: str) -> str:
                 temperature=0.2,
                 max_tokens=1500,
             )
-            return response.choices[0].message.content
+            content = (response.choices[0].message.content or "").strip()
+            if content:
+                return content
+            raise RuntimeError(f"Groq model '{model_name}' returned an empty response.")
         except Exception as err:
+            logger.warning(f"Groq model '{model_name}' failed: {err}")
             last_error = err
             continue
 
