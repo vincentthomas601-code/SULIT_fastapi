@@ -28,7 +28,7 @@ from models import (
     ActiveApplianceSession,
 )
 from billing_engine import calculate_ph_electricity_bill, get_energy_insights
-from dsp_features import extract_22d_features
+from dsp_features import extract_features
 from ml_engine import classifier
 
 logger = logging.getLogger(__name__)
@@ -246,11 +246,15 @@ def process_transient_event(data: TransientEventInput, background_tasks: Backgro
 
     if delta_p >= 15.0:
         try:
-            features_22d = extract_22d_features(
-                raw_samples=data.raw_samples, p_before=data.p_before, p_after=data.p_after,
-                pf_before=data.pf_before, pf_after=data.pf_after
+            features = extract_features(
+                raw_samples=data.raw_samples,
+                p_before=data.p_before,
+                p_after=data.p_after,
+                pf_before=data.pf_before,
+                pf_after=data.pf_after,
+                target_dim=classifier.expected_features
             )
-            raw_name, raw_conf = classifier.predict(features_22d)
+            raw_name, raw_conf = classifier.predict(features)
             appliance_name = str(raw_name)
             confidence = float(raw_conf)
         except Exception as exc:
@@ -577,7 +581,7 @@ def get_recent_events(x_device_id: str = Header(..., alias="X-Device-ID"), db: S
             "appliance_name": e.appliance_name,
             "event_type": e.event_type,
             "delta_power_w": float(e.delta_power_w) if e.delta_power_w else 0.0,
-            "confidence": float(e.confidence) if e.confidence else 0.0,
+            "confidence": float(e.confidence) if e.confidence is not None else 0.0,
             "timestamp": e.timestamp.replace(tzinfo=timezone.utc).isoformat() if getattr(e, "timestamp", None) else None
         }
         for e in events

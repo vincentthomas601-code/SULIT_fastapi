@@ -22,7 +22,6 @@ def _extract_window_metrics(win: np.ndarray) -> np.ndarray:
     zc_count = float(len(np.where(np.diff(np.signbit(win)))[0]))
 
     fft_spectrum = np.abs(np.fft.rfft(win))
-    # 60 Hz fundamental bin for 3000 samples @ 30 kHz (10 Hz/bin -> Bin 6)
     if fft_spectrum.size > 6:
         fundamental_idx = 6
     elif fft_spectrum.size > 1:
@@ -55,32 +54,28 @@ def extract_features(
     target_dim: int = 40
 ) -> np.ndarray:
     """
-    Extracts a fused DSP + steady-state feature vector matching the ONNX model's
-    expected input dimensionality (40D default, 22D legacy fallback).
+    Extracts a 40D fused DSP + steady-state feature vector matching input_fused_features_40d.
     """
-    signal = np.nan_to_num(np.array(raw_samples, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
-
-    if signal.size < 4:
-        return np.zeros(target_dim, dtype=np.float32)
-
-    # Split into pre-event and post-event windows
-    midpoint = signal.size // 2
-    pre_window = signal[:midpoint]
-    post_window = signal[midpoint:]
-
-    # Remove ADC DC offset per window independently
-    pre_window = pre_window - np.mean(pre_window)
-    post_window = post_window - np.mean(post_window)
-
-    # Steady-state step changes (PZEM)
     delta_p = float(p_after - p_before)
     delta_pf = float(pf_after - pf_before)
+
+    signal = np.nan_to_num(np.array(raw_samples, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    if signal.size < 4:
+        fallback = np.zeros(target_dim, dtype=np.float32)
+        if target_dim >= 1:
+            fallback[0] = delta_p
+        if target_dim >= 2:
+            fallback[1] = delta_pf
+        return fallback
+
+    midpoint = signal.size // 2
+    pre_window = signal[:midpoint] - np.mean(signal[:midpoint])
+    post_window = signal[midpoint:] - np.mean(signal[midpoint:])
 
     pre_metrics = _extract_window_metrics(pre_window)
     post_metrics = _extract_window_metrics(post_window)
     diff_metrics = post_metrics - pre_metrics
 
-    # Fuse step features (2) + differential transient metrics (20) + post-step steady metrics (18) = 40D
     features = np.concatenate((
         np.array([delta_p, delta_pf], dtype=np.float32),
         diff_metrics,
@@ -112,4 +107,4 @@ def extract_22d_features(
     pf_before: float,
     pf_after: float
 ) -> np.ndarray:
-    return extract_features(raw_samples, p_before, p_after, pf_before, pf_after, target_dim=22)
+    return extract_features(raw_samples, p_before, p_after, pf_before, pf_after, target_dim=40)
