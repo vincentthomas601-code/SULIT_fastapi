@@ -4,7 +4,6 @@ sqlalchemy
 psycopg[binary]
 pydantic
 pdfplumber
-beautifulsoup4
 requests
 apscheduler
 google-genai
@@ -14,4 +13,3 @@ scipy
 onnxruntime
 groq==0.11.0
 httpx==0.27.2
-playwright 

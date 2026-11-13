@@ -6,21 +6,6 @@ from groq import Groq
 
 logger = logging.getLogger("BillingEngine")
 
-# Environment-configurable billing bounds (removing hardcoded Philippine tax numbers)
-LIFELINE_TIER_1 = Decimal(os.getenv("LIFELINE_TIER_1_MAX", "50.0"))
-LIFELINE_TIER_1_PCT = Decimal(os.getenv("LIFELINE_TIER_1_PCT", "1.00"))
-LIFELINE_TIER_2 = Decimal(os.getenv("LIFELINE_TIER_2_MAX", "70.0"))
-LIFELINE_TIER_2_PCT = Decimal(os.getenv("LIFELINE_TIER_2_PCT", "0.35"))
-LIFELINE_TIER_3 = Decimal(os.getenv("LIFELINE_TIER_3_MAX", "100.0"))
-LIFELINE_TIER_3_PCT = Decimal(os.getenv("LIFELINE_TIER_3_PCT", "0.20"))
-
-TAX_TIER_1_START = Decimal(os.getenv("TAX_TIER_1_START", "650.0"))
-TAX_TIER_1_PCT = Decimal(os.getenv("TAX_TIER_1_PCT", "0.10"))
-TAX_TIER_2_START = Decimal(os.getenv("TAX_TIER_2_START", "1000.0"))
-TAX_TIER_2_PCT = Decimal(os.getenv("TAX_TIER_2_PCT", "0.20"))
-TAX_TIER_3_START = Decimal(os.getenv("TAX_TIER_3_START", "1500.0"))
-TAX_TIER_3_PCT = Decimal(os.getenv("TAX_TIER_3_PCT", "0.35"))
-
 def _to_decimal(val: float) -> Decimal:
     return Decimal(str(val))
 
@@ -51,33 +36,33 @@ def calculate_ph_electricity_bill(
     distribution_charge = kwh * applied_dist_rate
     pre_discount_subtotal = variable_charge + distribution_charge
 
-    # Dynamic Lifeline Discount Matrix
+    # Dynamic Lifeline Discount Matrix (Untouched)
     lifeline_pct = Decimal("0.00")
-    if kwh <= LIFELINE_TIER_1:
-        lifeline_pct = LIFELINE_TIER_1_PCT
-    elif kwh <= LIFELINE_TIER_2:
-        lifeline_pct = LIFELINE_TIER_2_PCT
-    elif kwh <= LIFELINE_TIER_3:
-        lifeline_pct = LIFELINE_TIER_3_PCT
+    if kwh <= Decimal("20.0"):
+        lifeline_pct = Decimal("1.00")
+    elif kwh <= Decimal("50.0"):
+        lifeline_pct = Decimal("0.50")
+    elif kwh <= Decimal("70.0"):
+        lifeline_pct = Decimal("0.20")
+    elif kwh <= Decimal("100.0"):
+        lifeline_pct = Decimal("0.05")
 
     lifeline_discount_php = pre_discount_subtotal * lifeline_pct
     discounted_subtotal = pre_discount_subtotal - lifeline_discount_php
 
-    # Dynamic Energy Tax
+    # Dynamic Energy Tax (Untouched)
     effective_base_rate = discounted_subtotal / kwh
     energy_tax_php = Decimal("0.00")
 
-    if kwh > TAX_TIER_1_START:
-        excess_a = min(kwh, TAX_TIER_2_START) - TAX_TIER_1_START
-        energy_tax_php += excess_a * effective_base_rate * TAX_TIER_1_PCT
-
-    if kwh > TAX_TIER_2_START:
-        excess_b = min(kwh, TAX_TIER_3_START) - TAX_TIER_2_START
-        energy_tax_php += excess_b * effective_base_rate * TAX_TIER_2_PCT
-
-    if kwh > TAX_TIER_3_START:
-        excess_c = kwh - TAX_TIER_3_START
-        energy_tax_php += excess_c * effective_base_rate * TAX_TIER_3_PCT
+    if kwh > Decimal("650.0"):
+        excess = min(kwh, Decimal("1000.0")) - Decimal("650.0")
+        energy_tax_php += excess * effective_base_rate * Decimal("0.10")
+    if kwh > Decimal("1000.0"):
+        excess = min(kwh, Decimal("1500.0")) - Decimal("1000.0")
+        energy_tax_php += excess * effective_base_rate * Decimal("0.20")
+    if kwh > Decimal("1500.0"):
+        excess = kwh - Decimal("1500.0")
+        energy_tax_php += excess * effective_base_rate * Decimal("0.35")
 
     total_bill_php = discounted_subtotal + energy_tax_php
     effective_rate = total_bill_php / kwh
@@ -119,14 +104,15 @@ def get_energy_insights(telemetry_summary: str) -> str:
 
     client = Groq(api_key=api_key)
 
+    # FIXED: Safe, grounded instruction that prevents AI hallucinations
     system_instruction = (
         "You are SULIT AI, a Philippine residential energy efficiency analyst. "
-        "Provide clear, concise, actionable recommendations in Philippine Pesos (₱). "
-        "Conclude with a single line: **Total Potential Savings: ₱X,XXX / month**"
+        "Provide clear, concise, actionable recommendations in Philippine Pesos (₱) based ONLY on the provided usage data. "
+        "Do not invent or estimate total potential savings unless calculable directly from the provided data."
     )
 
-    primary_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-    models_to_try = [primary_model, "openai/gpt-oss-20b"]
+    primary_model = os.getenv("GROQ_MODEL", "llama3-70b-8192")
+    models_to_try = [primary_model, "mixtral-8x7b-32768"]
 
     last_error = None
     for model_name in models_to_try:

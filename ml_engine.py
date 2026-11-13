@@ -6,58 +6,47 @@ from dsp_features import APPLIANCE_CLASSES
 
 logger = logging.getLogger("MLEngine")
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "whited_1d_resnet_150ep.onnx")
+CONFIDENCE_THRESHOLD = 0.55
 
-# Feature standardization parameters (Mean and Std from WHITED training set)
-FEATURE_MEAN = np.zeros(22, dtype=np.float32)
-FEATURE_STD = np.ones(22, dtype=np.float32)
-CONFIDENCE_THRESHOLD = 0.60
+
+def softmax(logits: np.ndarray) -> np.ndarray:
+    exp_logits = np.exp(logits - np.max(logits))
+    return exp_logits / np.sum(exp_logits)
+
 
 class NILMClassifier:
     def __init__(self, model_path: str = MODEL_PATH):
         self.session = None
-        if os.path.exists(model_path):
-            try:
-                # Force CPU execution explicitly
-                self.session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
-                self.input_name = self.session.get_inputs()[0].name
-                logger.info(f"Successfully loaded ONNX model from '{model_path}'.")
-            except Exception as e:
-                logger.warning(f"Failed to initialize ONNX session ({e}). Open-set fallback active.")
-        else:
-            logger.warning(f"ONNX model '{model_path}' not found. Fallback active.")
+        self.expected_features = 22
 
-    def predict(self, feature_vector: np.ndarray) -> tuple[str, float]:
-        if self.session is not None:
-            try:
-                # Apply standardization scaling
-                scaled_vector = (feature_vector - FEATURE_MEAN) / (FEATURE_STD + 1e-6)
-                input_data = np.array(scaled_vector, dtype=np.float32).reshape(1, 1, 22)
-                
-                outputs = self.session.run(None, {self.input_name: input_data})
-                logits = outputs[0][0]
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"ONNX model not found at '{model_path}'")
 
-                exp_logits = np.exp(logits - np.max(logits))
-                probabilities = exp_logits / np.sum(exp_logits)
-                predicted_idx = int(np.argmax(probabilities))
-                confidence = float(probabilities[predicted_idx])
+        self.session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        self.input_name = self.session.get_inputs()[0].name
+        logger.info(f"Loaded ONNX model '{model_path}' successfully.")
 
-                # Open-set rejection threshold
-                if confidence < CONFIDENCE_THRESHOLD:
-                    return "Unknown Load", round(confidence, 4)
+    def predict(self, features: list | np.ndarray) -> tuple[str, float]:
+        """
+        Runs pure ONNX inference on the 22D DSP feature vector.
+        Returns: (appliance_name: str, confidence: float)
+        """
+        feature_arr = np.array(features, dtype=np.float32).flatten()
+        if feature_arr.size != self.expected_features:
+            raise ValueError(f"Expected {self.expected_features} features, got {feature_arr.size}")
 
-                return APPLIANCE_CLASSES[predicted_idx], round(confidence, 4)
-            except Exception as e:
-                logger.error(f"ONNX Inference error ({e}). Falling back.")
+        input_tensor = feature_arr.reshape(1, 1, self.expected_features)
+        outputs = self.session.run(None, {self.input_name: input_tensor})
+        logits = outputs[0][0]
 
-        # Heuristic fallback returning Unknown on uncertainty
-        delta_p = feature_vector[0] if len(feature_vector) > 0 else 0.0
-        if delta_p >= 800:
-            return "Air Conditioner", 0.75
-        elif delta_p >= 300:
-            return "Fridge", 0.70
-        elif delta_p >= 100:
-            return "Fan", 0.65
-        else:
-            return "Unknown Load", 0.40
+        probs = softmax(logits)
+        predicted_idx = int(np.argmax(probs))
+        confidence = round(float(probs[predicted_idx]), 4)
+
+        if confidence < CONFIDENCE_THRESHOLD or predicted_idx >= len(APPLIANCE_CLASSES):
+            return "Unknown Load", confidence
+
+        return APPLIANCE_CLASSES[predicted_idx], confidence
+
 
 classifier = NILMClassifier()

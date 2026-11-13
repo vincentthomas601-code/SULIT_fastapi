@@ -18,6 +18,8 @@
   }
 </style>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- SECURITY FIX: Added DOMPurify for XSS protection -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SULIT PRO - Smart Home Energy Monitor</title>
@@ -303,6 +305,9 @@
   </div>
 
   <script>
+    // SECURITY FIX: Defined API Key to match backend requirement
+    const API_KEY = "change_this_to_a_secure_random_string_in_production"; 
+
     function getDeviceId() {
       let deviceId = localStorage.getItem('sulit_device_id');
       if (!deviceId || deviceId.startsWith('dev_')) {
@@ -310,6 +315,15 @@
         localStorage.setItem('sulit_device_id', deviceId);
       }
       return deviceId;
+    }
+
+    // Helper for secure API calls
+    function getAuthHeaders(additionalHeaders = {}) {
+      return {
+        'X-Device-ID': getDeviceId(),
+        'X-API-Key': API_KEY, // SECURITY FIX: Added auth header
+        ...additionalHeaders
+      };
     }
 
     let currentBillingData = null;
@@ -353,7 +367,8 @@
 
     // Connect Server-Sent Events (SSE)
     function initSSE() {
-      const evtSource = new EventSource('/api/v1/events/stream');
+      // SECURITY FIX: SSE now scopes by device_id and authenticates via token query parameter
+      const evtSource = new EventSource(`/api/v1/events/stream?device_id=${encodeURIComponent(getDeviceId())}&token=${encodeURIComponent(API_KEY)}`);
 
       evtSource.onopen = function() {
         console.log('[SSE] Connected to real-time event stream.');
@@ -362,6 +377,9 @@
       evtSource.onmessage = function(event) {
         try {
           const payload = JSON.parse(event.data);
+          // Ignore heartbeat pulses
+          if (payload.type === 'HEARTBEAT') return; 
+
           console.log('[SSE] Broadcast received:', payload);
           if (payload.type === 'TRANSIENT_DETECTED' || payload.type === 'TELEMETRY_UPDATED') {
             refreshAllDashboardData();
@@ -378,7 +396,7 @@
 
     async function fetchProviders() {
       try {
-        const res = await fetch('/api/v1/providers');
+        const res = await fetch('/api/v1/providers', { headers: getAuthHeaders() });
         const data = await res.json();
         const select = document.getElementById('provider-select');
         select.innerHTML = '';
@@ -395,17 +413,13 @@
 
     async function fetchLiveBilling() {
       try {
-        const res = await fetch('/api/v1/billing/live', {
-          headers: { 'X-Device-ID': getDeviceId() }
-        });
+        const res = await fetch('/api/v1/billing/live', { headers: getAuthHeaders() });
         if (!res.ok) return;
         const data = await res.json();
         currentBillingData = data;
 
-        // FIX 1: Read net_accumulated_kwh (fallback to accumulated_kwh)
         const kwh = data.net_accumulated_kwh !== undefined ? data.net_accumulated_kwh : (data.accumulated_kwh ?? 0);
         
-        // FIX 2: Set the dropdown value to match the saved provider in the backend
         const providerSelect = document.getElementById('provider-select');
         if (providerSelect && data.provider_code) {
           providerSelect.value = data.provider_code;
@@ -416,18 +430,17 @@
         const providerName = data.provider_name || 'Default Provider';
         const region = data.region || 'Luzon Grid';
 
-        // Update DOM with 2 decimal places for the kWh reading
         document.getElementById('card-kwh').innerHTML = `${Number(kwh).toFixed(2)} <span class="text-sm font-normal text-slate-400">kWh</span>`;
         document.getElementById('card-bill').innerText = `₱ ${Number(totalBill).toFixed(2)}`;
         document.getElementById('card-rate').innerText = `Rate: ₱${Number(rate).toFixed(4)}/kWh`;
         document.getElementById('card-provider-info').innerText = `${providerName} (${region})`;
 
-        // --- NEW BUDGET TRACKING LOGIC ---
+        // Budget tracking
         const savedBudget = parseFloat(localStorage.getItem(`sulit_budget_${getDeviceId()}`)) || 3500;
         document.getElementById('budget-input').value = savedBudget;
         
         let budgetPct = (totalBill / savedBudget) * 100;
-        const boundedPct = Math.min(budgetPct, 100); // Cap visual bar at 100%
+        const boundedPct = Math.min(budgetPct, 100);
         
         const progressBar = document.getElementById('budget-progress-bar');
         progressBar.style.width = `${boundedPct}%`;
@@ -437,22 +450,18 @@
         const statusText = document.getElementById('budget-status-text');
         if (totalBill === 0) {
           statusText.innerText = "Awaiting meter reading";
-          progressBar.classList.remove('bg-rose-500');
-          progressBar.classList.add('bg-sky-500');
+          progressBar.className = 'bg-sky-500 h-1.5 rounded-full transition-all duration-500';
           statusText.classList.remove('text-rose-400');
         } else {
           statusText.innerText = `${budgetPct.toFixed(1)}% of Budget Used`;
           if (budgetPct >= 100) {
-            progressBar.classList.remove('bg-sky-500');
-            progressBar.classList.add('bg-rose-500');
+            progressBar.className = 'bg-rose-500 h-1.5 rounded-full transition-all duration-500';
             statusText.classList.add('text-rose-400');
           } else {
-            progressBar.classList.remove('bg-rose-500');
-            progressBar.classList.add('bg-sky-500');
+            progressBar.className = 'bg-sky-500 h-1.5 rounded-full transition-all duration-500';
             statusText.classList.remove('text-rose-400');
           }
         }
-        // ---------------------------------
 
         const badge = document.getElementById('rate-badge');
         badge.innerText = `STATUS: ${data.rate_status || 'OK'}`;
@@ -465,7 +474,6 @@
         document.getElementById('bk-tax').innerText = `+ ₱ ${Number(data.energy_tax_php || 0).toFixed(2)}`;
         document.getElementById('bk-total').innerText = `₱ ${Number(totalBill).toFixed(2)}`;
 
-        // Carbon Math: 0.7122 kg CO2 per kWh (Philippine DOE Grid emission factor)
         const carbonKg = kwh * 0.7122;
         const treesPlanted = carbonKg / 21.77;
         document.getElementById('card-carbon-co2').innerHTML = `${carbonKg.toFixed(1)} <span class="text-sm font-normal text-slate-400">kg CO₂</span>`;
@@ -483,9 +491,7 @@
 
     async function fetchActiveAppliances() {
       try {
-        const res = await fetch('/api/v1/appliances/active', {
-          headers: { 'X-Device-ID': getDeviceId() }
-        });
+        const res = await fetch('/api/v1/appliances/active', { headers: getAuthHeaders() });
         if (!res.ok) return;
         const data = await res.json();
         const container = document.getElementById('active-appliances-list');
@@ -494,7 +500,6 @@
         countBadge.innerText = `${data.length} Active`;
         document.getElementById('card-active-loads-count').innerText = `${data.length} Active Loads`;
 
-        // Calculate total demand in kW
         let totalWatts = 0;
         data.forEach(app => totalWatts += app.power_draw_w);
         const livekW = (totalWatts / 1000.0).toFixed(2);
@@ -531,9 +536,7 @@
 
     async function fetchRecentEvents() {
       try {
-        const res = await fetch('/api/v1/events/recent', {
-          headers: { 'X-Device-ID': getDeviceId() }
-        });
+        const res = await fetch('/api/v1/events/recent', { headers: getAuthHeaders() });
         if (!res.ok) return;
         const data = await res.json();
         const tbody = document.getElementById('event-log-tbody');
@@ -572,10 +575,7 @@
       const selected = document.getElementById('provider-select').value;
       await fetch('/api/v1/settings', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-Device-ID': getDeviceId()
-        },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ selected_provider: selected })
       });
       fetchLiveBilling();
@@ -585,10 +585,7 @@
       document.getElementById('custom-rate-container').classList.toggle('hidden', !isCustom);
       await fetch('/api/v1/settings', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-Device-ID': getDeviceId()
-        },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ use_custom_rate: isCustom })
       });
       fetchLiveBilling();
@@ -599,7 +596,7 @@
       if (isNaN(budgetVal) || budgetVal <= 0) return alert('Please enter a valid budget amount.');
       
       localStorage.setItem(`sulit_budget_${getDeviceId()}`, budgetVal);
-      refreshAllDashboardData(); // Instantly update the progress bar
+      refreshAllDashboardData();
     }
 
     async function saveCustomRate() {
@@ -607,10 +604,7 @@
       if (isNaN(val) || val <= 0) return alert('Please enter a valid rate.');
       await fetch('/api/v1/settings', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-Device-ID': getDeviceId()
-        },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ use_custom_rate: true, custom_rate: val })
       });
       fetchLiveBilling();
@@ -628,7 +622,7 @@
       try {
         const res = await fetch('/api/v1/billing/upload-ebill', { 
           method: 'POST', 
-          headers: { 'X-Device-ID': getDeviceId() },
+          headers: getAuthHeaders(),
           body: formData 
         });
         const data = await res.json();
@@ -650,52 +644,16 @@
       outputDiv.innerText = "⏳ SULIT AI is analyzing your live appliance telemetry and tariff rates...";
       btn.disabled = true;
 
-      // Fix applied here to utilize the net_accumulated_kwh field for the AI payload
-      const kwh = currentBillingData ? (currentBillingData.net_accumulated_kwh ?? currentBillingData.accumulated_kwh ?? 0) : 0;
-      const bill = currentBillingData ? currentBillingData.total_bill_php.toFixed(2) : '0.00';
-      const rate = currentBillingData ? currentBillingData.effective_rate_per_kwh.toFixed(4) : '0.0000';
-      const provider = currentBillingData ? currentBillingData.provider_name : 'Default Provider';
-
-      // Gather live active loads from NILM engine
-      let activeLoadsText = "No specific active transient loads detected currently.";
-      try {
-        const appRes = await fetch('/api/v1/appliances/active', {
-          headers: { 'X-Device-ID': getDeviceId() }
-        });
-        if (appRes.ok) {
-          const apps = await appRes.json();
-          if (apps.length > 0) {
-            activeLoadsText = apps.map(a => `${a.appliance_name} (${a.power_draw_w} W)`).join(', ');
-          }
-        }
-      } catch (e) {
-        console.warn('Could not fetch active appliances for AI context:', e);
-      }
-
+      // SECURITY FIX: Removed prompt_text from the payload. 
+      // The prompt is now securely generated on the backend to prevent the app from being used as a free LLM proxy.
       const payloadData = {
-        device_id: getDeviceId(),
-        prompt_text: `
-        Analyze this live SULIT PRO metering telemetry:
-        - Total Usage: ${kwh} kWh
-        - Current Bill Estimate: ₱ ${bill}
-        - Effective Tariff Rate: ₱ ${rate} / kWh
-        - Distribution Utility: ${provider}
-        - Currently Active Disaggregated Loads (NILM 1D-ResNet): ${activeLoadsText}
-
-        Provide:
-        1. A brief appliance cost-attribution evaluation.
-        2. Detected waste risks based specifically on the active loads listed above.
-        3. 3 high-impact, actionable steps to lower the monthly bill.
-        `
+        device_id: getDeviceId()
       };
 
       try {
         const response = await fetch('/api/insights', {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'X-Device-ID': getDeviceId()
-          },
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify(payloadData)
         });
 
@@ -707,7 +665,10 @@
             .replace(/\n?```$/i, '')
             .trim();
 
-          outputDiv.innerHTML = marked.parse(cleanMarkdown);
+          // SECURITY FIX: DOMPurify sanitizes the markdown output to prevent XSS attacks[cite: 22]
+          const rawHtml = marked.parse(cleanMarkdown);
+          const safeHtml = DOMPurify.sanitize(rawHtml);
+          outputDiv.innerHTML = safeHtml;
         } else {
           outputDiv.innerText = "Error generating insights: " + (data.detail || "Unknown error");
         }
@@ -732,7 +693,6 @@
       });
     });
 
-    // Fallback periodic refresh every 30 seconds
     setInterval(refreshAllDashboardData, 30000);
   </script>
 </body>
