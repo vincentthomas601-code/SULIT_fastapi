@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -12,13 +13,13 @@ from typing import Optional
 import pdfplumber
 from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header, Request, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from database import Base, engine, get_db
+from database import Base, SessionLocal, engine, get_db
 from models import (
     ProviderRule,
     ProviderRate,
@@ -44,10 +45,24 @@ def verify_api_key(api_key: str = Depends(api_key_header)):
     return api_key
 
 
+def _seed_providers_if_empty():
+    db = SessionLocal()
+    try:
+        if db.query(ProviderRule).count() == 0:
+            logger.info("provider_rules is empty — running initial PRESYO-PH sync...")
+            from scraper import scrape_utility_rates
+            scrape_utility_rates(exit_on_error=False)
+    except Exception as exc:
+        logger.warning(f"Startup provider sync skipped: {exc}")
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     ensure_database_columns()
+    threading.Thread(target=_seed_providers_if_empty, daemon=True).start()
     logger.info("Application startup complete.")
     yield
     logger.info("Application shutdown.")
@@ -190,9 +205,12 @@ def get_or_create_device_settings(device_id: str, db: Session) -> UserSettings:
     return settings
 
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def serve_dashboard():
-    return FileResponse("index.html")
+    with open("index.html", "r", encoding="utf-8") as f:
+        html = f.read()
+    escaped_key = API_KEY.replace("\\", "\\\\").replace('"', '\\"')
+    return HTMLResponse(content=html.replace("__INJECTED_API_KEY__", escaped_key))
 
 
 @app.get("/health")
@@ -386,6 +404,7 @@ def get_live_billing(x_device_id: Optional[str] = Header(default="default_device
             "effective_rate_per_kwh": round(active_rate, 4),
             "variable_charge_php": 0.0,
             "distribution_charge_php": 0.0,
+            "pre_discount_subtotal_php": 0.0,
             "lifeline_discount_percentage": 0.0,
             "lifeline_discount_php": 0.0,
             "energy_tax_php": 0.0,
@@ -475,12 +494,10 @@ def reset_billing_cycle(
     baseline_kwh = float(latest_telemetry.accumulated_kwh) if latest_telemetry else 0.0
     settings.cycle_start_kwh = baseline_kwh
 
-    # Reset cycle telemetry history down to a single clean baseline reading
     db.query(TelemetryLog).filter(TelemetryLog.device_id == device_id).delete(synchronize_session=False)
     if latest_telemetry:
         db.add(TelemetryLog(device_id=device_id, accumulated_kwh=baseline_kwh))
 
-    # Deactivate active loads and clear transient event history for the new cycle
     db.query(ActiveApplianceSession).filter(
         ActiveApplianceSession.device_id == device_id,
         ActiveApplianceSession.is_active == True,
@@ -515,7 +532,6 @@ def get_chart_analytics(
     now_utc = datetime.now(timezone.utc)
     now_ph = now_utc.astimezone(PH_TZ)
 
-    # 1. Load Disaggregation (real kWh / Wh attribution per detected appliance)
     events = (
         db.query(ApplianceEvent)
         .filter(ApplianceEvent.device_id == device_id)
@@ -546,7 +562,6 @@ def get_chart_analytics(
             else:
                 appliance_kwh[name] = appliance_kwh.get(name, 0.0) + (watts / 1000.0) * (1.0 / 60.0)
 
-    # Account for currently running appliances up to now
     for sess in active_sessions:
         name = sess.appliance_name or "Unknown Load"
         start_ts = _to_utc(sess.started_at)
@@ -556,7 +571,6 @@ def get_chart_analytics(
         duration_hrs = max((now_utc - start_ts).total_seconds() / 3600.0, 1.0 / 60.0)
         appliance_kwh[name] = appliance_kwh.get(name, 0.0) + (watts / 1000.0) * duration_hrs
 
-    # Any remaining unpaired TURN_ON events
     for name, pending in open_events.items():
         for start_ts, watts in pending:
             duration_hrs = max((now_utc - start_ts).total_seconds() / 3600.0, 1.0 / 60.0)
@@ -566,7 +580,6 @@ def get_chart_analytics(
     disagg_labels = [k for k, v in sorted_appliances if v > 0]
     disagg_series = [round(v, 4) for k, v in sorted_appliances if v > 0]
 
-    # 2. Consumption Profile Curve (24h hourly kW or 7d daily kWh)
     telemetry_rows = (
         db.query(TelemetryLog)
         .filter(TelemetryLog.device_id == device_id)
@@ -587,7 +600,6 @@ def get_chart_analytics(
             if bucket in daily_kwh:
                 daily_kwh[bucket] += delta_kwh
 
-        # Supplement from appliance events if telemetry logs only have a single point
         if sum(daily_kwh.values()) == 0.0 and events:
             for ev in events:
                 if ev.event_type == "TURN_ON":
@@ -623,7 +635,6 @@ def get_chart_analytics(
             if bucket in hourly_kw:
                 hourly_kw[bucket] = max(hourly_kw[bucket], avg_kw)
 
-        # Overlay peak kW from transient appliance events per hour
         running_kw = 0.0
         for ev in events:
             running_kw = max(0.0, running_kw + (float(ev.delta_power_w or 0.0) / 1000.0))

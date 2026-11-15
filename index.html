@@ -236,7 +236,10 @@
 
         <!-- Provider Select -->
         <div>
-          <label class="block text-[10px] text-slate-400 uppercase tracking-wider mb-1">Distribution Utility Provider</label>
+          <div class="flex justify-between items-center mb-1">
+            <label class="block text-[10px] text-slate-400 uppercase tracking-wider">Distribution Utility Provider</label>
+            <button type="button" id="sync-rates-btn" onclick="syncProviderRates()" class="text-[10px] text-sky-400 hover:text-sky-300 font-semibold">↻ Sync Rates</button>
+          </div>
           <select id="provider-select" onchange="updateProviderSettings()" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-sky-500">
           </select>
         </div>
@@ -328,7 +331,10 @@
   </div>
 
   <script>
-    const API_KEY = "change_this_to_a_secure_random_string_in_production";
+    const _injectedKey = "__INJECTED_API_KEY__";
+    const API_KEY = _injectedKey === "__INJECTED_" + "API_KEY__"
+      ? "change_this_to_a_secure_random_string_in_production"
+      : _injectedKey;
 
     function getDeviceId() {
       let deviceId = localStorage.getItem('sulit_device_id');
@@ -353,7 +359,6 @@
     let donutChart = null;
     let lineChart = null;
 
-    // Initialize ApexCharts without hardcoded static numbers
     function initCharts() {
       const donutOptions = {
         series: [],
@@ -463,7 +468,6 @@
       }
     }
 
-    // Connect Server-Sent Events (SSE)
     function initSSE() {
       const evtSource = new EventSource(`/api/v1/events/stream?device_id=${encodeURIComponent(getDeviceId())}&token=${encodeURIComponent(API_KEY)}`);
 
@@ -569,14 +573,44 @@
     }
 
     async function fetchProviders() {
+      const countLabel = document.getElementById('provider-match-count');
       try {
         const res = await fetch('/api/v1/providers', { headers: getAuthHeaders() });
+        if (!res.ok) {
+          countLabel.innerText = `Auth/API Error (${res.status})`;
+          return;
+        }
         const data = await res.json();
         allProviders = Array.isArray(data) ? data : [];
         populateRegionDropdown();
         filterProviders();
       } catch (err) {
         console.error('Error loading provider list:', err);
+        countLabel.innerText = 'Network error';
+      }
+    }
+
+    async function syncProviderRates() {
+      const btn = document.getElementById('sync-rates-btn');
+      btn.disabled = true;
+      btn.innerText = 'Syncing...';
+      try {
+        const res = await fetch('/api/v1/providers/sync', {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(`Rate sync failed: ${data.detail || 'Unknown error'}`);
+          return;
+        }
+        await fetchProviders();
+        await fetchLiveBilling();
+      } catch (err) {
+        alert(`Sync error: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '↻ Sync Rates';
       }
     }
 
@@ -612,7 +646,6 @@
         document.getElementById('card-rate').innerText = `Rate: ₱${Number(rate).toFixed(4)}/kWh`;
         document.getElementById('card-provider-info').innerText = `${providerName} (${region})`;
 
-        // Budget tracking
         const savedBudget = parseFloat(localStorage.getItem(`sulit_budget_${getDeviceId()}`)) || 3500;
         document.getElementById('budget-input').value = savedBudget;
         
@@ -689,7 +722,6 @@
           return;
         }
 
-        // Immediately clear charts & AI report UI while backend data refreshes
         if (donutChart) {
           donutChart.updateOptions({ labels: [] }, false, false);
           donutChart.updateSeries([]);
