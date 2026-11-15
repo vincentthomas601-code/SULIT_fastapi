@@ -4,9 +4,11 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urljoin
 import requests
 
-PRESYO_API_URL = os.getenv("PRESYO_API_URL", "https://presyo.icsc.ngo/api/national")
+PRESYO_BASE_URL = "https://presyo.icsc.ngo"
+PRESYO_API_URL = os.getenv("PRESYO_API_URL", f"{PRESYO_BASE_URL}/api/national")
 REQUEST_TIMEOUT_SECONDS = int(os.getenv("PRESYO_TIMEOUT", "30"))
 LOOKBACK_MONTHS = int(os.getenv("PRESYO_LOOKBACK_MONTHS", "6"))
 USER_AGENT = "SULIT-PRO-rate-sync/1.0 (+residential rate monitoring)"
@@ -18,9 +20,10 @@ def current_month_ph() -> str:
 
 
 def fetch_month(year: int, month: int) -> Any:
+    params = {"month": calendar.month_name[month], "year": year}
     response = requests.get(
         PRESYO_API_URL,
-        params={"month": calendar.month_name[month], "year": year},
+        params=params,
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
         timeout=REQUEST_TIMEOUT_SECONDS,
     )
@@ -30,48 +33,117 @@ def fetch_month(year: int, month: int) -> Any:
     return response.json()
 
 
-def extract_records(payload: Any) -> List[Dict[str, Any]]:
-    if payload is None:
+def extract_records(
+    payload: Any,
+    params: Optional[Dict[str, Any]] = None,
+    base_url: str = PRESYO_API_URL,
+    depth: int = 0,
+) -> List[Dict[str, Any]]:
+    if payload is None or depth > 3:
         return []
-    
-    records = []
+
+    records: List[Dict[str, Any]] = []
     if isinstance(payload, list):
         records = [r for r in payload if isinstance(r, dict)]
     elif isinstance(payload, dict):
-        candidates = [
-            v for v in payload.values()
-            if isinstance(v, list) and v and all(isinstance(i, dict) for i in v)
-        ]
-        if len(candidates) == 1:
-            records = candidates[0]
-        elif len(candidates) > 1:
-            raise RuntimeError("Ambiguous API response.")
+        for key in ("data", "records", "results", "utilities", "items", "rows"):
+            val = payload.get(key)
+            if isinstance(val, list) and val and all(isinstance(i, dict) for i in val):
+                records = val
+                break
+        if not records:
+            candidates = [
+                v for v in payload.values()
+                if isinstance(v, list) and v and all(isinstance(i, dict) for i in v)
+            ]
+            if len(candidates) == 1:
+                records = candidates[0]
+            elif len(candidates) > 1:
+                raise RuntimeError("Ambiguous API response.")
     else:
         raise RuntimeError(f"Unexpected API response type: {type(payload).__name__}")
 
-    # Check if the API returned a list of navigation links instead of data
+    # Follow API directory links with full URL + month/year params
     if records and "href" in records[0] and "endpoint" in records[0]:
-        target_url = records[0]["href"]
-        
-        # Try to find the specific link for distribution utilities
+        target_href = records[0]["href"]
         for item in records:
-            endpoint_name = str(item.get("endpoint", "")).lower()
-            if "distribution" in endpoint_name or "du" in endpoint_name:
-                target_url = item["href"]
+            ep = str(item.get("endpoint", "")).lower()
+            lbl = str(item.get("label", "")).lower()
+            if any(k in ep or k in lbl for k in ("distribution", "utility", "utilities", "du", "rate", "national")):
+                target_href = item["href"]
                 break
-                
-        # Follow the link to fetch the actual utility rates
+
+        target_url = urljoin(base_url, str(target_href))
         response = requests.get(
             target_url,
+            params=params,
             headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
+        if response.status_code == 404:
+            return []
         response.raise_for_status()
-        
-        # Process the new payload recursively
-        return extract_records(response.json())
-        
+        return extract_records(response.json(), params=params, base_url=target_url, depth=depth + 1)
+
     return records
+
+
+def _fetch_via_playwright() -> Tuple[str, List[Dict[str, Any]]]:
+    """Fallback: renders presyo.icsc.ngo/national with Playwright and extracts utility rows."""
+    from playwright.sync_api import sync_playwright
+
+    captured_json: List[List[Dict[str, Any]]] = []
+    rendered_records: List[Dict[str, Any]] = []
+    billing_month = current_month_ph()
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            page = browser.new_page(user_agent=USER_AGENT)
+
+            def on_response(resp):
+                try:
+                    if "/api/" in resp.url and resp.status == 200:
+                        data = resp.json()
+                        recs = extract_records(data)
+                        if recs and "href" not in recs[0]:
+                            captured_json.append(recs)
+                except Exception:
+                    pass
+
+            page.on("response", on_response)
+            page.goto(f"{PRESYO_BASE_URL}/national", wait_until="networkidle", timeout=45000)
+            page.wait_for_timeout(3000)
+
+            for batch in captured_json:
+                try:
+                    parse_records(batch)
+                    return billing_month, batch
+                except Exception:
+                    continue
+
+            rows = page.evaluate("""() => {
+                const out = [];
+                document.querySelectorAll('table tbody tr').forEach(tr => {
+                    const cells = Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim());
+                    if (cells.length >= 2) {
+                        out.push({
+                            name: cells[0],
+                            region: cells.length >= 3 ? cells[1] : 'Luzon Grid',
+                            rate: cells[cells.length - 1]
+                        });
+                    }
+                });
+                return out;
+            }""")
+            if rows:
+                rendered_records = rows
+        finally:
+            browser.close()
+
+    if not rendered_records:
+        raise RuntimeError("Playwright could not extract utility rows from PRESYO-PH.")
+    return billing_month, rendered_records
 
 
 def _months_back_from_now():
@@ -88,26 +160,38 @@ def fetch_recent_months() -> List[Tuple[str, List[Dict[str, Any]]]]:
     found = []
     for year, month in _months_back_from_now():
         try:
-            records = extract_records(fetch_month(year, month))
+            params = {"month": calendar.month_name[month], "year": year}
+            records = extract_records(fetch_month(year, month), params=params)
             if records:
                 found.append((f"{year:04d}-{month:02d}", records))
         except Exception:
             continue
     if not found:
-        raise RuntimeError(f"PRESYO-PH returned no records for the last {LOOKBACK_MONTHS} months.")
+        bm, recs = _fetch_via_playwright()
+        found.append((bm, recs))
     return found
 
 
 def fetch_latest_available_month() -> Tuple[str, List[Dict[str, Any]]]:
     """Returns (billing_month, raw_records) for the most recent month published on PRESYO-PH."""
+    last_err: Optional[Exception] = None
     for year, month in _months_back_from_now():
         try:
-            records = extract_records(fetch_month(year, month))
+            params = {"month": calendar.month_name[month], "year": year}
+            records = extract_records(fetch_month(year, month), params=params)
             if records:
                 return f"{year:04d}-{month:02d}", records
-        except Exception:
+        except Exception as exc:
+            last_err = exc
             continue
-    raise RuntimeError(f"PRESYO-PH returned no records for the last {LOOKBACK_MONTHS} months.")
+
+    try:
+        return _fetch_via_playwright()
+    except Exception as pw_exc:
+        raise RuntimeError(
+            f"PRESYO-PH returned no records for the last {LOOKBACK_MONTHS} months "
+            f"(api_err={last_err}, playwright_err={pw_exc})."
+        )
 
 
 def field_map(sample_record: Optional[Dict[str, Any]] = None) -> Dict[str, Optional[str]]:
@@ -124,7 +208,7 @@ def field_map(sample_record: Optional[Dict[str, Any]] = None) -> Dict[str, Optio
 
     mapping = {
         "name": resolve("PRESYO_FIELD_NAME", ["utility", "name", "du_name", "distribution_utility", "code"]),
-        "rate": resolve("PRESYO_FIELD_RATE", ["rate", "residential_rate", "total_rate", "price"]),
+        "rate": resolve("PRESYO_FIELD_RATE", ["rate", "residential_rate", "total_rate", "price", "effective_rate"]),
         "region": resolve("PRESYO_FIELD_REGION", ["grid", "region", "grid_classification"]),
         "generation": resolve("PRESYO_FIELD_GENERATION", ["generation", "generation_rate", "gen_rate"]),
     }
