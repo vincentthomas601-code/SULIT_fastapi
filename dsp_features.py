@@ -1,8 +1,12 @@
 import numpy as np
 
 APPLIANCE_CLASSES = [
-    "Air Conditioner", "Fan", "Fridge", "Hair Dryer", "Heater",
-    "Kettle", "Lighting", "Microwave", "Pump", "Toaster", "Vacuum"
+    "Fridge",
+    "Kettle",
+    "Microwave",
+    "Rice Cooker",
+    "TV",
+    "Washing Machine",
 ]
 
 
@@ -54,7 +58,7 @@ def extract_features(
     target_dim: int = 40
 ) -> np.ndarray:
     """
-    Extracts a 40D fused DSP + steady-state feature vector matching input_fused_features_40d.
+    Extracts a 40D fused DSP + steady-state feature vector.
     """
     delta_p = float(p_after - p_before)
     delta_pf = float(pf_after - pf_before)

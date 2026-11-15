@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Philippine NILM & Smart Billing Backend",
-    version="1.1.0",
+    version="1.2.0",
     lifespan=lifespan,
 )
 
@@ -188,7 +188,16 @@ def serve_dashboard():
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {
+        "status": "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "models_loaded": classifier.get_status()["loaded_count"],
+    }
+
+
+@app.get("/api/v1/ml/status", dependencies=[Depends(verify_api_key)])
+def get_ml_status():
+    return classifier.get_status()
 
 
 @app.get("/api/v1/events/stream")
@@ -254,7 +263,11 @@ def process_transient_event(data: TransientEventInput, background_tasks: Backgro
                 pf_after=data.pf_after,
                 target_dim=classifier.expected_features
             )
-            raw_name, raw_conf = classifier.predict(features)
+            raw_name, raw_conf = classifier.predict(
+                features=features,
+                raw_samples=data.raw_samples,
+                delta_p=delta_p,
+            )
             appliance_name = str(raw_name)
             confidence = float(raw_conf)
         except Exception as exc:
@@ -297,7 +310,12 @@ def process_transient_event(data: TransientEventInput, background_tasks: Backgro
             return {"status": "SUCCESS", "event": "TURN_OFF", "message": "No matching active session found."}
 
         closest_session = min(active_sessions, key=lambda s: abs(float(s.power_draw_w) - abs_delta))
-        closest_session.is_active = False
+
+        if data.p_after <= 10.0:
+            for session in active_sessions:
+                session.is_active = False
+        else:
+            closest_session.is_active = False
 
         event_log = ApplianceEvent(
             device_id=device_id, appliance_name=closest_session.appliance_name,
