@@ -10,6 +10,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import numpy as np
 import pdfplumber
 from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header, Request, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +28,7 @@ from models import (
     TelemetryLog,
     ApplianceEvent,
     ActiveApplianceSession,
+    CustomApplianceSignature,
 )
 from billing_engine import calculate_ph_electricity_bill, get_energy_insights
 from dsp_features import extract_features
@@ -70,7 +72,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Philippine NILM & Smart Billing Backend",
-    version="1.3.0",
+    version="1.4.0",
     lifespan=lifespan,
 )
 
@@ -128,6 +130,11 @@ class TransientEventInput(BaseModel):
     raw_samples: list[float] = Field(..., description="6000 SCT-013 current samples (200ms @ 30kHz)")
 
 
+class RelabelEventInput(BaseModel):
+    appliance_name: str = Field(..., min_length=1, max_length=64)
+    save_signature: bool = True
+
+
 class UserSettingsUpdate(BaseModel):
     selected_provider: Optional[str] = None
     use_custom_rate: Optional[bool] = None
@@ -153,41 +160,87 @@ def _to_utc(dt: Optional[datetime]) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def compute_crest_factor(raw_samples: list[float]) -> float:
+    if not raw_samples:
+        return 1.414
+    samples = np.nan_to_num(np.asarray(raw_samples, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    if samples.size < 4:
+        return 1.414
+    samples = samples - np.mean(samples)
+    rms = float(np.sqrt(np.mean(samples ** 2)))
+    if rms < 1e-6:
+        return 1.414
+    peak = float(np.max(np.abs(samples)))
+    return round(peak / rms, 4)
+
+
+def _match_custom_signature(
+    device_id: str,
+    delta_p: float,
+    pf_after: float,
+    crest_factor: float,
+    db: Session,
+) -> Optional[tuple[str, float]]:
+    signatures = (
+        db.query(CustomApplianceSignature)
+        .filter(CustomApplianceSignature.device_id == device_id)
+        .all()
+    )
+    if not signatures:
+        return None
+
+    best_name: Optional[str] = None
+    best_dist = float("inf")
+
+    for sig in signatures:
+        sig_w = float(sig.avg_watts or 0.0)
+        if sig_w <= 0:
+            continue
+
+        tol_w = max(25.0, sig_w * 0.15)
+        diff_w = abs(delta_p - sig_w)
+        if diff_w > tol_w:
+            continue
+
+        diff_pf = 0.0
+        if pf_after > 0 and sig.avg_pf and float(sig.avg_pf) > 0:
+            diff_pf = abs(pf_after - float(sig.avg_pf))
+            if diff_pf > 0.10:
+                continue
+
+        diff_cf = 0.0
+        if crest_factor > 0 and sig.avg_crest_factor and float(sig.avg_crest_factor) > 0:
+            diff_cf = abs(crest_factor - float(sig.avg_crest_factor))
+            if diff_cf > 0.45:
+                continue
+
+        dist = (diff_w / tol_w) * 0.70 + (diff_pf / 0.10) * 0.15 + (diff_cf / 0.45) * 0.15
+        if dist < best_dist:
+            best_dist = dist
+            best_name = sig.appliance_name
+
+    if best_name is None:
+        return None
+
+    confidence = round(max(0.84, min(0.99, 0.99 - best_dist * 0.14)), 4)
+    return best_name, confidence
+
+
 def ensure_database_columns():
-    if engine.name == "sqlite":
-        with engine.connect() as conn:
-            user_columns = {col[1] for col in conn.execute(text("PRAGMA table_info(user_settings)")).fetchall()}
-            if user_columns:
-                if "device_id" not in user_columns:
-                    conn.execute(text("ALTER TABLE user_settings ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
-                if "monthly_budget_php" not in user_columns:
-                    conn.execute(text("ALTER TABLE user_settings ADD COLUMN monthly_budget_php FLOAT DEFAULT NULL"))
-                if "cycle_start_kwh" not in user_columns:
-                    conn.execute(text("ALTER TABLE user_settings ADD COLUMN cycle_start_kwh FLOAT DEFAULT 0.0"))
-
-            telemetry_columns = {col[1] for col in conn.execute(text("PRAGMA table_info(telemetry_logs)")).fetchall()}
-            if telemetry_columns:
-                if "device_id" not in telemetry_columns:
-                    conn.execute(text("ALTER TABLE telemetry_logs ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
-            conn.commit()
-    elif engine.name in ["postgresql", "postgres"]:
-        with engine.connect() as conn:
-            user_query = text("SELECT column_name FROM information_schema.columns WHERE table_name = 'user_settings'")
-            user_columns = {row[0] for row in conn.execute(user_query).fetchall()}
-            if user_columns:
-                if "device_id" not in user_columns:
-                    conn.execute(text("ALTER TABLE user_settings ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
-                if "monthly_budget_php" not in user_columns:
-                    conn.execute(text("ALTER TABLE user_settings ADD COLUMN monthly_budget_php DOUBLE PRECISION DEFAULT NULL"))
-                if "cycle_start_kwh" not in user_columns:
-                    conn.execute(text("ALTER TABLE user_settings ADD COLUMN cycle_start_kwh DOUBLE PRECISION DEFAULT 0.0"))
-
-            telemetry_query = text("SELECT column_name FROM information_schema.columns WHERE table_name = 'telemetry_logs'")
-            telemetry_columns = {row[0] for row in conn.execute(telemetry_query).fetchall()}
-            if telemetry_columns:
-                if "device_id" not in telemetry_columns:
-                    conn.execute(text("ALTER TABLE telemetry_logs ADD COLUMN device_id VARCHAR DEFAULT 'default_device'"))
-            conn.commit()
+    alter_statements = [
+        "ALTER TABLE user_settings ADD COLUMN device_id VARCHAR DEFAULT 'default_device'",
+        "ALTER TABLE user_settings ADD COLUMN monthly_budget_php FLOAT DEFAULT NULL",
+        "ALTER TABLE user_settings ADD COLUMN cycle_start_kwh FLOAT DEFAULT 0.0",
+        "ALTER TABLE telemetry_logs ADD COLUMN device_id VARCHAR DEFAULT 'default_device'",
+        "ALTER TABLE appliance_events ADD COLUMN pf_after FLOAT DEFAULT NULL",
+        "ALTER TABLE appliance_events ADD COLUMN crest_factor FLOAT DEFAULT NULL",
+    ]
+    for stmt in alter_statements:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(stmt))
+        except Exception:
+            pass
 
 
 def get_or_create_device_settings(device_id: str, db: Session) -> UserSettings:
@@ -281,34 +334,53 @@ def process_transient_event(data: TransientEventInput, background_tasks: Backgro
     delta_p = float(data.p_after - data.p_before)
 
     if delta_p >= 15.0:
-        try:
-            features = extract_features(
-                raw_samples=data.raw_samples,
-                p_before=data.p_before,
-                p_after=data.p_after,
-                pf_before=data.pf_before,
-                pf_after=data.pf_after,
-                target_dim=classifier.expected_features
-            )
-            raw_name, raw_conf = classifier.predict(
-                features=features,
-                raw_samples=data.raw_samples,
-                delta_p=delta_p,
-            )
-            appliance_name = str(raw_name)
-            confidence = float(raw_conf)
-        except Exception as exc:
-            logger.exception("NILM inference failed during TURN_ON")
-            raise HTTPException(status_code=500, detail=f"NILM inference error: {type(exc).__name__}: {exc}")
+        crest_factor = compute_crest_factor(data.raw_samples)
+        matched_custom = _match_custom_signature(
+            device_id=device_id,
+            delta_p=delta_p,
+            pf_after=float(data.pf_after),
+            crest_factor=crest_factor,
+            db=db,
+        )
+
+        if matched_custom is not None:
+            appliance_name, confidence = matched_custom
+        else:
+            try:
+                features = extract_features(
+                    raw_samples=data.raw_samples,
+                    p_before=data.p_before,
+                    p_after=data.p_after,
+                    pf_before=data.pf_before,
+                    pf_after=data.pf_after,
+                    target_dim=classifier.expected_features
+                )
+                raw_name, raw_conf = classifier.predict(
+                    features=features,
+                    raw_samples=data.raw_samples,
+                    delta_p=delta_p,
+                )
+                appliance_name = str(raw_name)
+                confidence = float(raw_conf)
+            except Exception as exc:
+                logger.exception("NILM inference failed during TURN_ON")
+                raise HTTPException(status_code=500, detail=f"NILM inference error: {type(exc).__name__}: {exc}")
 
         try:
             event_log = ApplianceEvent(
-                device_id=device_id, appliance_name=appliance_name,
-                event_type="TURN_ON", delta_power_w=float(delta_p), confidence=float(confidence)
+                device_id=device_id,
+                appliance_name=appliance_name,
+                event_type="TURN_ON",
+                delta_power_w=float(delta_p),
+                confidence=float(confidence),
+                pf_after=float(data.pf_after),
+                crest_factor=float(crest_factor),
             )
             session_entry = ActiveApplianceSession(
-                device_id=device_id, appliance_name=appliance_name,
-                power_draw_w=float(delta_p), is_active=True
+                device_id=device_id,
+                appliance_name=appliance_name,
+                power_draw_w=float(delta_p),
+                is_active=True,
             )
             db.add_all([event_log, session_entry])
             db.commit()
@@ -337,16 +409,28 @@ def process_transient_event(data: TransientEventInput, background_tasks: Backgro
             return {"status": "SUCCESS", "event": "TURN_OFF", "message": "No matching active session found."}
 
         closest_session = min(active_sessions, key=lambda s: abs(float(s.power_draw_w) - abs_delta))
+        matched_name = closest_session.appliance_name
 
-        if data.p_after <= 10.0:
+        if data.p_after <= 15.0:
             for session in active_sessions:
                 session.is_active = False
+        elif abs_delta < float(closest_session.power_draw_w) * 0.65:
+            # Multi-stage switch step-down (e.g., Hairdryer High -> Low -> Off)
+            remaining_w = max(0.0, float(closest_session.power_draw_w) - abs_delta)
+            if remaining_w <= 20.0:
+                closest_session.is_active = False
+            else:
+                closest_session.power_draw_w = remaining_w
         else:
             closest_session.is_active = False
 
         event_log = ApplianceEvent(
-            device_id=device_id, appliance_name=closest_session.appliance_name,
-            event_type="TURN_OFF", delta_power_w=float(delta_p), confidence=1.0
+            device_id=device_id,
+            appliance_name=matched_name,
+            event_type="TURN_OFF",
+            delta_power_w=float(delta_p),
+            confidence=1.0,
+            pf_after=float(data.pf_after),
         )
         db.add(event_log)
         db.commit()
@@ -355,13 +439,166 @@ def process_transient_event(data: TransientEventInput, background_tasks: Backgro
             broadcaster.broadcast,
             {
                 "type": "TRANSIENT_DETECTED", "device_id": device_id,
-                "event_type": "TURN_OFF", "appliance_name": closest_session.appliance_name,
+                "event_type": "TURN_OFF", "appliance_name": matched_name,
                 "delta_power_w": round(float(delta_p), 2), "confidence": None
             }
         )
-        return {"status": "SUCCESS", "event": "TURN_OFF", "appliance": closest_session.appliance_name, "delta_power_w": round(float(delta_p), 2)}
+        return {"status": "SUCCESS", "event": "TURN_OFF", "appliance": matched_name, "delta_power_w": round(float(delta_p), 2)}
 
     return {"status": "IGNORED", "message": "Power step below threshold."}
+
+
+@app.post("/api/v1/events/{event_id}/relabel", dependencies=[Depends(verify_api_key)])
+def relabel_appliance_event(
+    event_id: int,
+    payload: RelabelEventInput,
+    background_tasks: BackgroundTasks,
+    x_device_id: str = Header(..., alias="X-Device-ID"),
+    db: Session = Depends(get_db),
+):
+    device_id = normalize_device_id(x_device_id)
+    new_name = payload.appliance_name.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Appliance name cannot be empty.")
+
+    event = (
+        db.query(ApplianceEvent)
+        .filter(ApplianceEvent.id == event_id, ApplianceEvent.device_id == device_id)
+        .first()
+    )
+    if not event:
+        raise HTTPException(status_code=404, detail="Appliance event not found.")
+
+    old_name = event.appliance_name
+    watts = abs(float(event.delta_power_w or 0.0))
+    pf_val = float(event.pf_after) if event.pf_after is not None else 0.95
+    cf_val = float(event.crest_factor) if event.crest_factor is not None else 1.414
+
+    event.appliance_name = new_name
+    event.confidence = 1.0
+
+    # Relabel the matching TURN_OFF event immediately following this TURN_ON (if any)
+    if event.event_type == "TURN_ON":
+        paired_off = (
+            db.query(ApplianceEvent)
+            .filter(
+                ApplianceEvent.device_id == device_id,
+                ApplianceEvent.id > event.id,
+                ApplianceEvent.event_type == "TURN_OFF",
+                ApplianceEvent.appliance_name == old_name,
+            )
+            .order_by(ApplianceEvent.id.asc())
+            .first()
+        )
+        if paired_off:
+            paired_off.appliance_name = new_name
+
+        # Also update currently running session if it matches the old label and wattage
+        active_match = (
+            db.query(ActiveApplianceSession)
+            .filter(
+                ActiveApplianceSession.device_id == device_id,
+                ActiveApplianceSession.is_active == True,
+                ActiveApplianceSession.appliance_name == old_name,
+            )
+            .order_by(ActiveApplianceSession.id.desc())
+            .first()
+        )
+        if active_match:
+            active_match.appliance_name = new_name
+
+    # Save or update CustomApplianceSignature for future automatic detection
+    if payload.save_signature and watts >= 15.0:
+        existing_sigs = (
+            db.query(CustomApplianceSignature)
+            .filter(
+                CustomApplianceSignature.device_id == device_id,
+                CustomApplianceSignature.appliance_name == new_name,
+            )
+            .all()
+        )
+
+        # Match existing mode within ±20% wattage (keeps Low vs High heat settings distinct)
+        same_mode_sig = next(
+            (s for s in existing_sigs if abs(float(s.avg_watts) - watts) <= max(25.0, float(s.avg_watts) * 0.20)),
+            None,
+        )
+
+        if same_mode_sig:
+            n = int(same_mode_sig.sample_count or 1)
+            same_mode_sig.avg_watts = round((float(same_mode_sig.avg_watts) * n + watts) / (n + 1), 2)
+            same_mode_sig.avg_pf = round((float(same_mode_sig.avg_pf or pf_val) * n + pf_val) / (n + 1), 4)
+            same_mode_sig.avg_crest_factor = round((float(same_mode_sig.avg_crest_factor or cf_val) * n + cf_val) / (n + 1), 4)
+            same_mode_sig.sample_count = n + 1
+        else:
+            db.add(
+                CustomApplianceSignature(
+                    device_id=device_id,
+                    appliance_name=new_name,
+                    avg_watts=round(watts, 2),
+                    avg_pf=round(pf_val, 4),
+                    avg_crest_factor=round(cf_val, 4),
+                    sample_count=1,
+                )
+            )
+
+    db.commit()
+
+    background_tasks.add_task(
+        broadcaster.broadcast,
+        {
+            "type": "TRANSIENT_DETECTED",
+            "device_id": device_id,
+            "event_type": "RELABEL",
+            "appliance_name": new_name,
+        }
+    )
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Updated label to '{new_name}' and saved signature ({round(watts, 1)} W).",
+        "appliance_name": new_name,
+    }
+
+
+@app.get("/api/v1/signatures", dependencies=[Depends(verify_api_key)])
+def get_custom_signatures(x_device_id: str = Header(..., alias="X-Device-ID"), db: Session = Depends(get_db)):
+    device_id = normalize_device_id(x_device_id)
+    sigs = (
+        db.query(CustomApplianceSignature)
+        .filter(CustomApplianceSignature.device_id == device_id)
+        .order_by(CustomApplianceSignature.appliance_name.asc(), CustomApplianceSignature.avg_watts.asc())
+        .all()
+    )
+    return [
+        {
+            "id": s.id,
+            "appliance_name": s.appliance_name,
+            "avg_watts": round(float(s.avg_watts), 1),
+            "avg_pf": round(float(s.avg_pf or 0.0), 2),
+            "sample_count": int(s.sample_count or 1),
+        }
+        for s in sigs
+    ]
+
+
+@app.delete("/api/v1/signatures/{signature_id}", dependencies=[Depends(verify_api_key)])
+def delete_custom_signature(
+    signature_id: int,
+    x_device_id: str = Header(..., alias="X-Device-ID"),
+    db: Session = Depends(get_db),
+):
+    device_id = normalize_device_id(x_device_id)
+    sig = (
+        db.query(CustomApplianceSignature)
+        .filter(CustomApplianceSignature.id == signature_id, CustomApplianceSignature.device_id == device_id)
+        .first()
+    )
+    if not sig:
+        raise HTTPException(status_code=404, detail="Signature not found.")
+    db.delete(sig)
+    db.commit()
+    return {"status": "SUCCESS"}
 
 
 @app.get("/api/v1/billing/live", dependencies=[Depends(verify_api_key)])

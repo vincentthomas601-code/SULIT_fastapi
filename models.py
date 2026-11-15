@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Index, UniqueConstraint
 from database import Base
 
+
 class Device(Base):
     """Stores device registration and security tokens."""
     __tablename__ = "devices"
@@ -9,6 +10,7 @@ class Device(Base):
     device_id = Column(String, unique=True, index=True, nullable=False)
     api_token = Column(String, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
 
 class ProviderRule(Base):
     """Stores ERC-approved distribution tier matrices and base distribution fees."""
@@ -26,6 +28,7 @@ class ProviderRule(Base):
     tier_3_rate = Column(Float, default=1.5837)
     tier_4_rate = Column(Float, default=2.0941)
 
+
 class ProviderRate(Base):
     """Stores monthly scraped 200 kWh benchmark residential rates (₱/kWh)."""
     __tablename__ = "provider_rates"
@@ -39,6 +42,7 @@ class ProviderRate(Base):
     status = Column(String, default="SUCCESS")
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
+
 class UserSettings(Base):
     __tablename__ = "user_settings"
     id = Column(Integer, primary_key=True, index=True)
@@ -46,8 +50,9 @@ class UserSettings(Base):
     selected_provider = Column(String, default="MERALCO")
     use_custom_rate = Column(Boolean, default=False)
     custom_rate = Column(Float, nullable=True)
-    cycle_start_kwh = Column(Float, default=0.0)  
-    monthly_budget_php = Column(Float, nullable=True)  # NEW: Tracks target budget
+    cycle_start_kwh = Column(Float, default=0.0)
+    monthly_budget_php = Column(Float, nullable=True)
+
 
 class TelemetryLog(Base):
     """Time-series logs sent from ESP32 / PZEM-004T."""
@@ -59,6 +64,7 @@ class TelemetryLog(Base):
     device_id = Column(String, index=True, nullable=False)
     accumulated_kwh = Column(Float, nullable=False)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
 
 class ApplianceEvent(Base):
     """Logs classified appliance switching events (TURN_ON / TURN_OFF)."""
@@ -72,7 +78,10 @@ class ApplianceEvent(Base):
     event_type = Column(String, nullable=False)
     delta_power_w = Column(Float, nullable=False)
     confidence = Column(Float, nullable=False)
+    pf_after = Column(Float, nullable=True)
+    crest_factor = Column(Float, nullable=True)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
 
 class ActiveApplianceSession(Base):
     """Tracks currently active appliances per device for per-appliance cost attribution."""
@@ -83,3 +92,19 @@ class ActiveApplianceSession(Base):
     power_draw_w = Column(Float, nullable=False)
     started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     is_active = Column(Boolean, default=True)
+
+
+class CustomApplianceSignature(Base):
+    """Stores user-taught per-device appliance electrical signatures (Watts, PF, Crest Factor)."""
+    __tablename__ = "custom_appliance_signatures"
+    __table_args__ = (
+        Index('idx_custom_sig_device', 'device_id'),
+    )
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String, index=True, nullable=False)
+    appliance_name = Column(String, nullable=False)
+    avg_watts = Column(Float, nullable=False)
+    avg_pf = Column(Float, default=0.95)
+    avg_crest_factor = Column(Float, default=1.414)
+    sample_count = Column(Integer, default=1)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
