@@ -868,8 +868,9 @@
           const sign = evt.delta_power_w > 0 ? '+' : '';
           const confidencePct = (evt.confidence * 100).toFixed(0);
           const safeName = escapeHtml(evt.appliance_name);
+          const wattsStr = Number(evt.delta_power_w).toFixed(1);
           const fixBtn = isTurnOn
-            ? `<button type="button" onclick="openRelabelModal(${evt.id}, '${safeName}', ${Number(evt.delta_power_w).toFixed(1)})" class="px-2 py-0.5 text-[10px] rounded bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 font-semibold transition">Fix Label</button>`
+            ? `<button type="button" data-id="${evt.id}" data-name="${safeName}" data-watts="${wattsStr}" onclick="openRelabelFromBtn(this)" class="px-2 py-0.5 text-[10px] rounded bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 font-semibold transition">Fix Label</button>`
             : `<span class="text-[10px] text-slate-600">—</span>`;
 
           return `
@@ -881,7 +882,7 @@
                   ${evt.event_type}
                 </span>
               </td>
-              <td class="px-3 py-2 font-mono ${isTurnOn ? 'text-amber-400' : 'text-slate-400'}">${sign}${Number(evt.delta_power_w).toFixed(1)} W</td>
+              <td class="px-3 py-2 font-mono ${isTurnOn ? 'text-amber-400' : 'text-slate-400'}">${sign}${wattsStr} W</td>
               <td class="px-3 py-2 text-slate-300 font-mono">${confidencePct}%</td>
               <td class="px-3 py-2 text-right">${fixBtn}</td>
             </tr>
@@ -919,8 +920,10 @@
       }
     }
 
-    function openRelabelModal(eventId, currentName, watts) {
-      relabelTargetEventId = eventId;
+    function openRelabelFromBtn(btn) {
+      relabelTargetEventId = Number(btn.dataset.id);
+      const currentName = btn.dataset.name || '';
+      const watts = btn.dataset.watts || '0.0';
       document.getElementById('relabel-subtitle').innerText = `Detected as "${currentName}" (+${watts} W)`;
       document.getElementById('relabel-input').value = currentName === 'Hairdryer' ? '' : 'Hairdryer';
       const modal = document.getElementById('relabel-modal');
