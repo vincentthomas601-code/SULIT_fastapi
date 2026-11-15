@@ -33,19 +33,45 @@ def fetch_month(year: int, month: int) -> Any:
 def extract_records(payload: Any) -> List[Dict[str, Any]]:
     if payload is None:
         return []
+    
+    records = []
     if isinstance(payload, list):
-        return [r for r in payload if isinstance(r, dict)]
-    if isinstance(payload, dict):
+        records = [r for r in payload if isinstance(r, dict)]
+    elif isinstance(payload, dict):
         candidates = [
             v for v in payload.values()
             if isinstance(v, list) and v and all(isinstance(i, dict) for i in v)
         ]
         if len(candidates) == 1:
-            return candidates[0]
-        if len(candidates) > 1:
+            records = candidates[0]
+        elif len(candidates) > 1:
             raise RuntimeError("Ambiguous API response.")
-        return []
-    raise RuntimeError(f"Unexpected API response type: {type(payload).__name__}")
+    else:
+        raise RuntimeError(f"Unexpected API response type: {type(payload).__name__}")
+
+    # Check if the API returned a list of navigation links instead of data
+    if records and "href" in records[0] and "endpoint" in records[0]:
+        target_url = records[0]["href"]
+        
+        # Try to find the specific link for distribution utilities
+        for item in records:
+            endpoint_name = str(item.get("endpoint", "")).lower()
+            if "distribution" in endpoint_name or "du" in endpoint_name:
+                target_url = item["href"]
+                break
+                
+        # Follow the link to fetch the actual utility rates
+        response = requests.get(
+            target_url,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        
+        # Process the new payload recursively
+        return extract_records(response.json())
+        
+    return records
 
 
 def _months_back_from_now():
