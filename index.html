@@ -18,20 +18,18 @@
   }
 </style>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <!-- SECURITY FIX: Added DOMPurify for XSS protection -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SULIT PRO - Smart Home Energy Monitor</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- ApexCharts CDN for Load Disaggregation & Profile Line Charts -->
   <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
   <div class="max-w-7xl mx-auto px-4 py-6">
     
     <!-- Top Nav Header -->
-    <header class="flex justify-between items-center pb-6 border-b border-slate-800">
+    <header class="flex flex-wrap justify-between items-center gap-4 pb-6 border-b border-slate-800">
       <div>
         <div class="flex items-center space-x-2">
           <span class="text-2xl font-black tracking-tight text-sky-400">⚡ SULIT</span>
@@ -40,11 +38,16 @@
         <p class="text-xs text-slate-400 mt-0.5">Philippine 220V / 60Hz Grid Power & Tariff Monitor</p>
       </div>
 
-      <div class="flex items-center space-x-4">
+      <div class="flex items-center space-x-3">
         <!-- Rate Status Badge -->
         <div id="rate-badge" class="px-3 py-1 text-xs rounded-full font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
           Connecting...
         </div>
+        <!-- Reset Billing Cycle Button -->
+        <button id="reset-cycle-btn" onclick="resetBillingCycle()" class="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg text-xs font-semibold transition flex items-center gap-1.5" title="Reset Billing Cycle & Clear Charts">
+          <span>↺</span>
+          <span>Reset Cycle</span>
+        </button>
         <!-- Refresh Button -->
         <button onclick="refreshAllDashboardData()" class="p-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-slate-800 transition" title="Refresh Dashboard">
           🔄
@@ -101,8 +104,8 @@
         <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Estimated Bill</span>
         <div class="text-3xl font-extrabold text-sky-400 mt-2" id="card-bill">₱ 0.00</div>
         <div class="flex justify-between items-center text-xs text-slate-400 mt-3 pt-2 border-t border-slate-800/80">
-          <span id="card-rate">Rate: ₱0.00/kWh</span>
-          <span id="card-provider-info" class="truncate max-w-[110px]">Provider: --</span>
+          <span id="card-rate">Rate: ₱0.0000/kWh</span>
+          <span id="card-provider-info" class="truncate max-w-[130px]">Provider: --</span>
         </div>
       </div>
 
@@ -127,11 +130,11 @@
             <h2 class="text-base font-bold text-white">Load Disaggregation</h2>
             <p class="text-xs text-slate-400">AI Non-Intrusive Load Monitoring (NILM)</p>
           </div>
-          <span class="px-2.5 py-0.5 text-[10px] rounded font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20">Real-Time</span>
+          <span id="disagg-total-badge" class="px-2.5 py-0.5 text-[10px] rounded font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20">0.00 kWh Tracked</span>
         </div>
-        <div id="disaggregation-donut-chart" class="py-2"></div>
+        <div id="disaggregation-donut-chart" class="py-2 min-h-[250px] flex items-center justify-center"></div>
         <div class="flex justify-between items-center text-xs text-slate-500 pt-3 border-t border-slate-800">
-          <span>Model: <strong>1D ResNet (ONNX)</strong></span>
+          <span>Model: <strong>TCN-WaveNet (ONNX)</strong></span>
           <span>Sample Rate: 30 kHz</span>
         </div>
       </div>
@@ -146,29 +149,29 @@
           <p class="text-xs text-slate-400 italic">No active appliances detected yet.</p>
         </div>
         <div class="pt-4 border-t border-slate-800 text-xs text-slate-500 flex justify-between">
-          <span>Real-time power step matched ($\Delta P$)</span>
+          <span>Real-time power step matched (ΔP)</span>
           <span>Live ₱/hr cost attribution</span>
         </div>
       </div>
 
     </div>
 
-    <!-- Lower Section: 24-Hour Load Curve Profile (Full Width) -->
+    <!-- Lower Section: Load Curve Profile (Full Width) -->
     <div class="grid grid-cols-1 gap-6 mb-6">
       
-      <!-- 24-Hour Consumption Profile Curve -->
+      <!-- Consumption Profile Curve -->
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg">
         <div class="flex justify-between items-center mb-4">
           <div>
             <h2 class="text-base font-bold text-white">Consumption Profile</h2>
-            <p class="text-xs text-slate-400">Daily load curve with peak usage highlight</p>
+            <p id="profile-subtitle" class="text-xs text-slate-400">Live 24-hour demand curve (kW)</p>
           </div>
           <div class="flex space-x-2">
-            <button class="px-3 py-1 text-xs rounded bg-sky-600 text-white font-medium">24 Hours</button>
-            <button class="px-3 py-1 text-xs rounded bg-slate-950 text-slate-400 hover:text-slate-200 transition">7 Days</button>
+            <button id="btn-range-24h" onclick="setProfileRange('24h')" class="px-3 py-1 text-xs rounded bg-sky-600 text-white font-medium transition">24 Hours</button>
+            <button id="btn-range-7d" onclick="setProfileRange('7d')" class="px-3 py-1 text-xs rounded bg-slate-950 text-slate-400 hover:text-slate-200 transition">7 Days</button>
           </div>
         </div>
-        <div id="load-profile-line-chart"></div>
+        <div id="load-profile-line-chart" class="min-h-[230px]"></div>
       </div>
 
     </div>
@@ -211,6 +214,26 @@
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg space-y-4">
         <h2 class="text-base font-bold text-white">Tariff & Rate Mode Controller</h2>
         
+        <!-- Region Filter Dropdown -->
+        <div>
+          <label class="block text-[10px] text-slate-400 uppercase tracking-wider mb-1">Filter by Region / Grid</label>
+          <select id="region-select" onchange="onRegionFilterChange()" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-sky-500">
+            <option value="">All Regions</option>
+          </select>
+        </div>
+
+        <!-- Electric Provider Search Bar -->
+        <div>
+          <div class="flex justify-between items-center mb-1">
+            <label class="block text-[10px] text-slate-400 uppercase tracking-wider">Search Electric Provider</label>
+            <span id="provider-match-count" class="text-[10px] text-sky-400 font-mono">0 providers</span>
+          </div>
+          <div class="relative">
+            <input type="text" id="provider-search" oninput="filterProviders()" placeholder="Type utility name, acronym (e.g. MERALCO, VECO), or region..." class="w-full bg-slate-950 border border-slate-800 rounded-lg pl-3 pr-8 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500">
+            <button type="button" onclick="clearProviderFilters()" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs" title="Reset Search & Region Filter">✕</button>
+          </div>
+        </div>
+
         <!-- Provider Select -->
         <div>
           <label class="block text-[10px] text-slate-400 uppercase tracking-wider mb-1">Distribution Utility Provider</label>
@@ -305,8 +328,7 @@
   </div>
 
   <script>
-    // SECURITY FIX: Synced API Key with Render environment variable
-    const API_KEY = "45d493d8331c0421d94f69359305e467";
+    const API_KEY = "change_this_to_a_secure_random_string_in_production";
 
     function getDeviceId() {
       let deviceId = localStorage.getItem('sulit_device_id');
@@ -317,7 +339,6 @@
       return deviceId;
     }
 
-    // Helper for secure API calls
     function getAuthHeaders(additionalHeaders = {}) {
       return {
         'X-Device-ID': getDeviceId(),
@@ -327,42 +348,119 @@
     }
 
     let currentBillingData = null;
+    let allProviders = [];
+    let currentProfileRange = '24h';
     let donutChart = null;
     let lineChart = null;
 
-    // Initialize ApexCharts
+    // Initialize ApexCharts without hardcoded static numbers
     function initCharts() {
-      // Donut Chart for Disaggregation
       const donutOptions = {
-        series: [45, 25, 15, 15],
-        labels: ['Air Conditioner', 'Water Heater', 'Electric Fan', 'Other Loads'],
+        series: [],
+        labels: [],
         chart: { type: 'donut', height: 250, background: 'transparent' },
-        colors: ['#0ea5e9', '#f59e0b', '#10b981', '#64748b'],
+        colors: ['#0ea5e9', '#f59e0b', '#10b981', '#a855f7', '#f43f5e', '#64748b'],
         theme: { mode: 'dark' },
         stroke: { show: false },
         legend: { position: 'right', labels: { colors: '#94a3b8' } },
-        dataLabels: { enabled: false }
+        dataLabels: { enabled: true, formatter: (val) => `${val.toFixed(0)}%` },
+        noData: {
+          text: 'No appliance usage recorded in this cycle',
+          align: 'center',
+          verticalAlign: 'middle',
+          style: { color: '#64748b', fontSize: '12px' }
+        },
+        tooltip: {
+          y: { formatter: (val) => `${Number(val).toFixed(4)} kWh` }
+        }
       };
       donutChart = new ApexCharts(document.querySelector("#disaggregation-donut-chart"), donutOptions);
       donutChart.render();
 
-      // Line Chart for 24-Hour Load Curve
       const lineOptions = {
-        series: [{ name: 'Power (kW)', data: [0.4, 0.35, 0.3, 0.45, 1.2, 1.4, 1.8, 2.6, 2.5, 2.1, 1.6, 0.9] }],
+        series: [{ name: 'Power (kW)', data: [] }],
         chart: { type: 'area', height: 230, toolbar: { show: false }, background: 'transparent' },
         colors: ['#10b981'],
         theme: { mode: 'dark' },
         stroke: { curve: 'smooth', width: 3 },
         fill: { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.45, opacityTo: 0.05 } },
         xaxis: {
-          categories: ['12AM', '2AM', '4AM', '6AM', '8AM', '10AM', '12PM', '2PM', '4PM', '6PM', '8PM', '10PM'],
+          categories: [],
           labels: { style: { colors: '#64748b', fontSize: '10px' } }
         },
-        yaxis: { labels: { style: { colors: '#64748b' } } },
-        grid: { borderColor: '#1e293b' }
+        yaxis: {
+          min: 0,
+          labels: {
+            style: { colors: '#64748b' },
+            formatter: (val) => Number(val).toFixed(2)
+          }
+        },
+        grid: { borderColor: '#1e293b' },
+        noData: {
+          text: 'Awaiting live telemetry data...',
+          align: 'center',
+          verticalAlign: 'middle',
+          style: { color: '#64748b', fontSize: '12px' }
+        }
       };
       lineChart = new ApexCharts(document.querySelector("#load-profile-line-chart"), lineOptions);
       lineChart.render();
+    }
+
+    function setProfileRange(range) {
+      currentProfileRange = range;
+      const btn24 = document.getElementById('btn-range-24h');
+      const btn7d = document.getElementById('btn-range-7d');
+      const subtitle = document.getElementById('profile-subtitle');
+
+      if (range === '24h') {
+        btn24.className = 'px-3 py-1 text-xs rounded bg-sky-600 text-white font-medium transition';
+        btn7d.className = 'px-3 py-1 text-xs rounded bg-slate-950 text-slate-400 hover:text-slate-200 transition';
+        subtitle.innerText = 'Live 24-hour demand curve (kW)';
+      } else {
+        btn7d.className = 'px-3 py-1 text-xs rounded bg-sky-600 text-white font-medium transition';
+        btn24.className = 'px-3 py-1 text-xs rounded bg-slate-950 text-slate-400 hover:text-slate-200 transition';
+        subtitle.innerText = 'Daily energy consumption over the last 7 days (kWh)';
+      }
+
+      fetchChartData();
+    }
+
+    async function fetchChartData() {
+      try {
+        const res = await fetch(`/api/v1/analytics/charts?range=${encodeURIComponent(currentProfileRange)}`, {
+          headers: getAuthHeaders()
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+
+        if (donutChart && data.disaggregation) {
+          const labels = data.disaggregation.labels || [];
+          const series = data.disaggregation.series || [];
+          const totalKwh = Number(data.disaggregation.total_kwh || 0);
+          document.getElementById('disagg-total-badge').innerText = `${totalKwh.toFixed(2)} kWh Tracked`;
+
+          donutChart.updateOptions({ labels }, false, false);
+          donutChart.updateSeries(series);
+        }
+
+        if (lineChart && data.profile) {
+          const categories = data.profile.categories || [];
+          const points = data.profile.data || [];
+          const seriesName = data.profile.series_name || 'Power (kW)';
+          const unit = data.profile.unit || 'kW';
+
+          lineChart.updateOptions({
+            xaxis: { categories },
+            tooltip: {
+              y: { formatter: (val) => `${Number(val).toFixed(3)} ${unit}` }
+            }
+          }, false, false);
+          lineChart.updateSeries([{ name: seriesName, data: points }]);
+        }
+      } catch (err) {
+        console.error('Error fetching chart analytics:', err);
+      }
     }
 
     // Connect Server-Sent Events (SSE)
@@ -378,8 +476,11 @@
           const payload = JSON.parse(event.data);
           if (payload.type === 'HEARTBEAT') return;
 
-          console.log('[SSE] Broadcast received:', payload);
-          if (payload.type === 'TRANSIENT_DETECTED' || payload.type === 'TELEMETRY_UPDATED') {
+          if (
+            payload.type === 'TRANSIENT_DETECTED' ||
+            payload.type === 'TELEMETRY_UPDATED' ||
+            payload.type === 'CYCLE_RESET'
+          ) {
             refreshAllDashboardData();
           }
         } catch (e) {
@@ -392,18 +493,88 @@
       };
     }
 
+    function populateRegionDropdown() {
+      const regionSelect = document.getElementById('region-select');
+      const counts = {};
+      allProviders.forEach(p => {
+        const reg = (p.region || 'Unknown').trim();
+        counts[reg] = (counts[reg] || 0) + 1;
+      });
+
+      const regions = Object.keys(counts).sort((a, b) => a.localeCompare(b));
+      regionSelect.innerHTML = `<option value="">All Regions (${allProviders.length} Providers)</option>`;
+      regions.forEach(reg => {
+        const opt = document.createElement('option');
+        opt.value = reg;
+        opt.innerText = `${reg} (${counts[reg]})`;
+        regionSelect.appendChild(opt);
+      });
+    }
+
+    function filterProviders(preferredCode = null) {
+      const regionVal = document.getElementById('region-select').value;
+      const searchVal = document.getElementById('provider-search').value.trim().toLowerCase();
+      const select = document.getElementById('provider-select');
+      const countLabel = document.getElementById('provider-match-count');
+
+      const currentSelected = preferredCode || select.value;
+
+      const filtered = allProviders.filter(p => {
+        const matchesRegion = !regionVal || (p.region || '').trim() === regionVal;
+        const matchesSearch =
+          !searchVal ||
+          (p.provider_name || '').toLowerCase().includes(searchVal) ||
+          (p.provider_code || '').toLowerCase().includes(searchVal) ||
+          (p.region || '').toLowerCase().includes(searchVal);
+        return matchesRegion && matchesSearch;
+      });
+
+      countLabel.innerText = `${filtered.length} of ${allProviders.length}`;
+      select.innerHTML = '';
+
+      if (filtered.length === 0) {
+        const emptyOpt = document.createElement('option');
+        emptyOpt.value = '';
+        emptyOpt.innerText = 'No matching electric providers found';
+        select.appendChild(emptyOpt);
+        return;
+      }
+
+      filtered.forEach(p => {
+        const option = document.createElement('option');
+        option.value = p.provider_code;
+        const rateText = p.benchmark_rate ? ` — ₱${Number(p.benchmark_rate).toFixed(2)}/kWh` : '';
+        option.innerText = `[${p.region}] ${p.provider_name}${rateText}`;
+        select.appendChild(option);
+      });
+
+      if (currentSelected && filtered.some(p => p.provider_code === currentSelected)) {
+        select.value = currentSelected;
+      }
+    }
+
+    function onRegionFilterChange() {
+      filterProviders();
+      const select = document.getElementById('provider-select');
+      if (select.value) {
+        updateProviderSettings();
+      }
+    }
+
+    function clearProviderFilters() {
+      document.getElementById('region-select').value = '';
+      document.getElementById('provider-search').value = '';
+      const activeCode = currentBillingData ? currentBillingData.provider_code : null;
+      filterProviders(activeCode);
+    }
+
     async function fetchProviders() {
       try {
         const res = await fetch('/api/v1/providers', { headers: getAuthHeaders() });
         const data = await res.json();
-        const select = document.getElementById('provider-select');
-        select.innerHTML = '';
-        data.forEach(p => {
-          const option = document.createElement('option');
-          option.value = p.provider_code;
-          option.innerText = `[${p.region}] ${p.provider_name}`;
-          select.appendChild(option);
-        });
+        allProviders = Array.isArray(data) ? data : [];
+        populateRegionDropdown();
+        filterProviders();
       } catch (err) {
         console.error('Error loading provider list:', err);
       }
@@ -417,10 +588,18 @@
         currentBillingData = data;
 
         const kwh = data.net_accumulated_kwh !== undefined ? data.net_accumulated_kwh : (data.accumulated_kwh ?? 0);
-        
+        const rawMeterKwh = data.raw_device_kwh !== undefined ? data.raw_device_kwh : kwh;
+
         const providerSelect = document.getElementById('provider-select');
-        if (providerSelect && data.provider_code) {
-          providerSelect.value = data.provider_code;
+        if (providerSelect && data.provider_code && data.provider_code !== 'NONE') {
+          const existsInDropdown = Array.from(providerSelect.options).some(o => o.value === data.provider_code);
+          if (!existsInDropdown && allProviders.some(p => p.provider_code === data.provider_code)) {
+            document.getElementById('region-select').value = '';
+            document.getElementById('provider-search').value = '';
+            filterProviders(data.provider_code);
+          } else if (existsInDropdown) {
+            providerSelect.value = data.provider_code;
+          }
         }
 
         const totalBill = data.total_bill_php ?? 0;
@@ -443,11 +622,11 @@
         const progressBar = document.getElementById('budget-progress-bar');
         progressBar.style.width = `${boundedPct}%`;
         document.getElementById('budget-target-display').innerText = `₱${savedBudget.toLocaleString()} Budget`;
-        document.getElementById('meter-total-kwh').innerText = `${Number(kwh).toFixed(2)} kWh`;
+        document.getElementById('meter-total-kwh').innerText = `${Number(rawMeterKwh).toFixed(2)} kWh`;
 
         const statusText = document.getElementById('budget-status-text');
         if (totalBill === 0) {
-          statusText.innerText = "Awaiting meter reading";
+          statusText.innerText = kwh > 0 ? "Lifeline 100% discount active" : "Awaiting meter reading";
           progressBar.className = 'bg-sky-500 h-1.5 rounded-full transition-all duration-500';
           statusText.classList.remove('text-rose-400');
         } else {
@@ -480,10 +659,52 @@
         if (data.use_custom_rate) {
           document.querySelector('input[name="rate_mode"][value="custom"]').checked = true;
           document.getElementById('custom-rate-container').classList.remove('hidden');
+        } else {
+          document.querySelector('input[name="rate_mode"][value="auto"]').checked = true;
+          document.getElementById('custom-rate-container').classList.add('hidden');
         }
 
       } catch (err) {
         console.error('Error fetching live billing data:', err);
+      }
+    }
+
+    async function resetBillingCycle() {
+      const confirmed = confirm(
+        "Reset the current billing cycle? This will zero out your cycle kWh, estimated bill, active appliance loads, and usage charts."
+      );
+      if (!confirmed) return;
+
+      const btn = document.getElementById('reset-cycle-btn');
+      btn.disabled = true;
+
+      try {
+        const res = await fetch('/api/v1/billing/reset', {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(`Reset failed: ${data.detail || 'Unknown error'}`);
+          return;
+        }
+
+        // Immediately clear charts & AI report UI while backend data refreshes
+        if (donutChart) {
+          donutChart.updateOptions({ labels: [] }, false, false);
+          donutChart.updateSeries([]);
+        }
+        if (lineChart) {
+          lineChart.updateSeries([{ name: currentProfileRange === '7d' ? 'Energy (kWh)' : 'Power (kW)', data: [] }]);
+        }
+        document.getElementById('aiOutput').innerText =
+          'Billing cycle reset. Click "Generate AI Report" once new consumption is recorded.';
+
+        await refreshAllDashboardData();
+      } catch (err) {
+        alert(`Failed to reset billing cycle: ${err.message}`);
+      } finally {
+        btn.disabled = false;
       }
     }
 
@@ -571,6 +792,7 @@
 
     async function updateProviderSettings() {
       const selected = document.getElementById('provider-select').value;
+      if (!selected) return;
       await fetch('/api/v1/settings', {
         method: 'POST',
         headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -661,7 +883,6 @@
             .replace(/\n?```$/i, '')
             .trim();
 
-          // SECURITY FIX: DOMPurify sanitizes the markdown output to prevent XSS attacks
           const rawHtml = marked.parse(cleanMarkdown);
           const safeHtml = DOMPurify.sanitize(rawHtml);
           outputDiv.innerHTML = safeHtml;
@@ -675,10 +896,13 @@
       }
     }
 
-    function refreshAllDashboardData() {
-      fetchLiveBilling();
-      fetchActiveAppliances();
-      fetchRecentEvents();
+    async function refreshAllDashboardData() {
+      await fetchLiveBilling();
+      await Promise.all([
+        fetchActiveAppliances(),
+        fetchRecentEvents(),
+        fetchChartData()
+      ]);
     }
 
     document.addEventListener('DOMContentLoaded', () => {
