@@ -3,3 +3,4 @@ beautifulsoup4
 sqlalchemy
 psycopg[binary]
 python-dotenv
+requests
